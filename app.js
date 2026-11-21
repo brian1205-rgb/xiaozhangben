@@ -6,7 +6,7 @@
    ============================================================ */
 
 const STORE_KEY = 'xiaozhangben:v1';
-const APP_VERSION = '1.4.1';
+const APP_VERSION = '1.4.2';
 // 1.2.0 起支出分類分成「主分類 + 次分類」，資料格式 version 2（舊資料自動轉換）。
 // 1.1.0 起只記支出。舊版的收入／轉帳記錄仍保留在資料與備份檔中，只是不顯示。
 
@@ -1175,5 +1175,6 @@ if (navigator.storage?.persist) {
 }
 
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  // updateViaCache:'none'：檢查 sw.js 有沒有新版時不要用手機裡的舊檔
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {}));
 }
