@@ -12,7 +12,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 const STORE_KEY = 'xiaozhangben:v1'; // 舊版（1.x）存在手機裡的資料
-const APP_VERSION = '2.0.3';
+const APP_VERSION = '2.1.0';
 // 1.2.0 起支出分類分成「主分類 + 次分類」，資料格式 version 2（舊資料自動轉換）。
 // 1.1.0 起只記支出。舊版的收入／轉帳記錄仍保留在資料與備份檔中，只是不顯示。
 
@@ -422,7 +422,9 @@ async function logout() {
 const currentYM = () => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() + 1 }; };
 const ymKey = (ym) => `${ym.y}-${pad(ym.m)}`;
 // day：首頁選取的日期；range：明細清單要看「當天／當週／整月」；calOpen：是否展開整月日曆
-const ui = { tab: 'list', ym: currentYM(), reportSel: null, reportAccs: new Set(), persisted: null, day: todayStr(), range: 'month', calOpen: false };
+// 電腦版（螢幕寬）：日曆預設就展開整月
+const isWide = () => window.matchMedia('(min-width: 960px)').matches;
+const ui = { tab: 'list', ym: currentYM(), reportSel: null, reportAccs: new Set(), day: todayStr(), range: 'month', calOpen: isWide() };
 
 // 換月份後的狀態：本月就選今天，其他月份選 1 號；清單回到看整月
 function monthState(delta) {
@@ -467,9 +469,13 @@ function daysForAvg() {
 function render() {
   const ready = cloud.status === 'ready';
   document.body.classList.toggle('no-tabs', !ready);
-  if (!ready) { $('#view').innerHTML = viewGate(); return; }
+  if (!ready) { $('#view').innerHTML = viewGate(); $('#view').dataset.tab = 'gate'; return; }
+  $('#view').dataset.tab = ui.tab;
   $('#view').innerHTML = cloud.gotMeta && cloud.gotTxs ? VIEWS[ui.tab]() : ledgerBar() + `<div class="empty"><div class="spinner"></div>載入帳本中…</div>`;
   document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === ui.tab));
+  // 電腦版左邊選單下方的帳本切換
+  $('#sideLedger').innerHTML = cloud.ledgers.length < 2 ? '' : `<div class="side-h">帳本</div>` + cloud.ledgers.map((l) =>
+    `<button class="side-lg${l.id === cloud.activeId ? ' on' : ''}" data-action="switch-ledger" data-id="${esc(l.id)}">${esc(ledgerLabel(l))}</button>`).join('');
 }
 
 // 登入畫面／載入中
@@ -637,23 +643,25 @@ function viewList() {
     emptyMsg = '這個月還沒有記錄';
   }
   const txs = pool.sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
-  let html = '';
-  html += monthBar(true) + calendarCard(byDay) + rangeStats(byDay);
+  // 手機：上下排；電腦：左邊日曆、右邊明細
+  const side = monthBar(true) + calendarCard(byDay) + rangeStats(byDay);
+  let main = '';
   if (!txs.length) {
-    return html + `<div class="empty"><div class="big">📝</div>${emptyMsg}<br>按下方 ＋ 記一筆吧</div>`;
+    main = `<div class="empty"><div class="big">📝</div>${emptyMsg}<br>按「＋ 記一筆」開始記帳</div>`;
+  } else {
+    const groups = new Map();
+    for (const t of txs) {
+      if (!groups.has(t.date)) groups.set(t.date, []);
+      groups.get(t.date).push(t);
+    }
+    for (const [ds, list] of groups) {
+      main += `<section class="day">
+        <div class="day-head"><span>${dayLabel(ds)}</span><span>$${fmt(sumAmt(list))}</span></div>
+        <div class="rows">${list.map(txRow).join('')}</div>
+      </section>`;
+    }
   }
-  const groups = new Map();
-  for (const t of txs) {
-    if (!groups.has(t.date)) groups.set(t.date, []);
-    groups.get(t.date).push(t);
-  }
-  for (const [ds, list] of groups) {
-    html += `<section class="day">
-      <div class="day-head"><span>${dayLabel(ds)}</span><span>$${fmt(sumAmt(list))}</span></div>
-      <div class="rows">${list.map(txRow).join('')}</div>
-    </section>`;
-  }
-  return html;
+  return `<div class="lay-list"><div class="lay-side">${side}</div><div class="lay-main">${main}</div></div>`;
 }
 
 // ---------- 報表 ----------
@@ -749,7 +757,8 @@ function viewReport() {
   const txs = accs.size ? monthTxs().filter((t) => accs.has(t.accountId)) : monthTxs();
   const type = 'expense';
   const label = accs.size ? `${ui.ym.m} 月支出 · ${data.accounts.filter((a) => accs.has(a.id)).map((a) => a.name).join('、')}` : undefined;
-  let html = monthBar() + accFilterBar() + summaryCard(txs, label) + trendCard();
+  // 電腦版：月份總額和 12 個月長條圖並排
+  let html = monthBar() + accFilterBar() + `<div class="rep-top">${summaryCard(txs, label)}${trendCard()}</div>`;
 
   const sums = new Map();
   for (const t of txs) sums.set(t.categoryId, (sums.get(t.categoryId) || 0) + t.amount);
@@ -778,9 +787,9 @@ function viewReport() {
     ? `<div class="dc-lbl">${esc(sel.name)}</div><div class="dc-val">$${fmt(sel.value)}</div><div class="dc-sub">${pct(sel.value, total)}</div>`
     : `<div class="dc-lbl">總${TYPE_LABEL[type]}</div><div class="dc-val">$${fmt(total)}</div><div class="dc-sub">${rows.length} 個分類</div>`;
 
-  html += `<div class="card">
+  html += `<div class="card cat-card">
     <div class="donut-box">${donutSvg(slices, total, sliceSel)}<div class="donut-center">${center}</div></div>
-    <div class="rows" style="box-shadow:none;margin:0 -16px -16px;border-radius:0 0 16px 16px">
+    <div class="rows cat-rows">
       ${rows.map((r, i) => {
         const on = selId === r.id || (selId === '__other' && i >= TOP);
         const dim = selId && !on ? ' dim' : '';
@@ -1621,11 +1630,19 @@ $('#sheet').addEventListener('change', onBind);
 // 電腦鍵盤也能輸入金額
 document.addEventListener('keydown', (ev) => {
   const top = layers[layers.length - 1];
-  if (ev.target.matches('input, select, textarea')) {
+  if (ev.target.matches?.('input, select, textarea')) {
     if (ev.key === 'Enter' && ev.target.type === 'text') ev.target.blur();
+    if (ev.key === 'Escape' && top) { ev.target.blur(); closeLayer(); }
     return;
   }
   if (ev.key === 'Escape' && top) { closeLayer(); return; }
+  // 電腦快捷鍵（沒有開任何視窗時）：N 記一筆、← → 換月份
+  if (!top && !ev.ctrlKey && !ev.metaKey && !ev.altKey && cloud.status === 'ready') {
+    if (ev.key === 'n' || ev.key === 'N') { ev.preventDefault(); actions['new-tx'](); return; }
+    if ((ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') && (ui.tab === 'list' || ui.tab === 'report')) {
+      ev.preventDefault(); shiftMonth(ev.key === 'ArrowLeft' ? -1 : 1); ui.reportSel = null; render(); return;
+    }
+  }
   if (!entry || top !== 'sheet') return;
   if (/^[0-9.+\-]$/.test(ev.key)) { ev.preventDefault(); pressKey(ev.key); }
   else if (ev.key === 'Backspace') { ev.preventDefault(); pressKey('back'); }
@@ -1633,6 +1650,8 @@ document.addEventListener('keydown', (ev) => {
 });
 
 // ---------- 啟動 ----------
+// 視窗拉寬變成電腦版時，日曆自動展開整月
+window.matchMedia('(min-width: 960px)').addEventListener('change', (e) => { ui.calOpen = e.matches; render(); });
 render();
 getRedirectResult(auth).catch((e) => { cloud.loginError = '登入失敗：' + (e.code || e.message); render(); });
 onAuthStateChanged(auth, (user) => {

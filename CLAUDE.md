@@ -5,7 +5,7 @@
 
 - 網站：https://brian1205-rgb.github.io/xiaozhangben/
 - 存放區：https://github.com/brian1205-rgb/xiaozhangben（Public，`main` 分支根目錄就是網站）
-- 目前版本：**2.0.3**（`app.js` 的 `APP_VERSION`）
+- 目前版本：**2.1.0**（`app.js` 的 `APP_VERSION`）
 
 ## 多台電腦開發（重要）
 使用者會在不同電腦開發，GitHub 是唯一的正本：
@@ -22,6 +22,7 @@
 - 程式都由 Claude 寫。流程：使用者提需求 → Claude 修改 → **在瀏覽器用手機尺寸（375×812）實測** → 測試沒問題後 **Claude 直接 commit 並 push 到 GitHub**（使用者已同意）→ 確認網站已更新 → 請使用者把手機 App 關掉重開。
 - 只在使用者要求修改、且測試通過後才 push；commit 訊息用中文描述改了什麼。
 - 介面偏好：淺色模式、內文 18px、首頁不要上方標題列、底部選單目前分頁要明顯。
+- 電腦版（2.1.0 起）：同一個網址，螢幕寬 960px 以上自動換排版（style.css 最後的 @media 區塊）。改畫面時手機（375×812）和電腦（1280×800）兩種尺寸都要測。
 
 ## 檔案結構
 ```
@@ -29,7 +30,7 @@
 index.html            頁面骨架、底部選單
 app.js                全部程式（ES module，無框架、無打包；從 gstatic CDN 載入 Firebase 10.14.1）
 style.css             樣式（固定淺色）
-sw.js                 Service Worker：network-first 離線快取，抓檔用 cache:no-cache（GitHub Pages 有 max-age=600，不這樣手機會用 10 分鐘內的舊檔）。改了檔案要把 CACHE 版本 +1（目前 xiaozhangben-v13）；gstatic 的 Firebase 檔案用 cache-first
+sw.js                 Service Worker：network-first 離線快取，抓檔用 cache:no-cache（GitHub Pages 有 max-age=600，不這樣手機會用 10 分鐘內的舊檔）。改了檔案要把 CACHE 版本 +1（目前 xiaozhangben-v14）；gstatic 的 Firebase 檔案用 cache-first
 manifest.webmanifest  PWA 設定
 icon-192.png / icon-512.png / apple-touch-icon.png   App 圖示（手繪暖色風）
 _config.yml           GitHub Pages 設定：排除 CLAUDE.md；_ 開頭資料夾本來就不會發佈
@@ -67,11 +68,12 @@ _dev/tools/           開發工具（不會出現在網站上）
 - `demo: true` 的是範例資料（設定頁可一鍵加入／移除，不影響真實記錄）。
 - **改資料格式一定要寫轉換程式並測舊資料**；匯入備份也會經過 `normalize()`。
 
-## 功能現況（2.0.0）
+## 功能現況（2.1.0）
 - 首頁：月份切換、**這星期日曆**（有記錄的日子有圓點，可展開整月；左右滑動時日曆跟著手指移動，放開後平滑換週/月）、**今日／本週／本月**三格（點了切換清單範圍）、依日期分組的明細。選了某天按＋會預設記在那天。
 - 記一筆：計算機鍵盤（可 + −）、主分類格子 → 次分類小按鈕（可不選）、付款方式、日期、備註。
 - 報表：上方可多選帳戶（不選＝全部，只記在當次開啟，不存檔），依選的帳戶算；近 12 個月支出長條圖（虛線＝有記帳月份的平均，點長條切換月份）；主分類圓餅圖（前 5 名＋其他），點主分類展開次分類明細。
 - 付款：每種付款方式本月花多少。
+- 電腦版：左邊固定選單（記一筆、各分頁、帳本切換）；明細頁左邊整月日曆＋統計、右邊明細；報表頁總額和 12 個月長條圖並排、圓餅圖和分類清單並排；記一筆和表單是畫面中間的視窗；快捷鍵 N 記一筆、← → 換月份、Esc 關閉視窗、記帳時可直接用鍵盤打金額。
 - 登入／帳本：Google 登入；個人帳本＋家用帳本；有兩本以上時月份列左邊有帳本按鈕，點一下就換到下一本；家用帳本明細顯示是誰記的。
 - 設定：帳號（登出）、帳本清單／建立家用帳本、家用帳本成員（建立者可用 Gmail 加入／移除、刪除帳本）、分類管理（主/次分類新增、改名、刪除、排序）、範例資料、匯出 JSON 備份／還原、匯出 CSV、清除資料。
 

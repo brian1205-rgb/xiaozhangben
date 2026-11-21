@@ -19,6 +19,7 @@
 <div id="app">
   <main id="view"></main>
   <nav class="tabbar">
+    <div class="side-brand"><img src="icon-192.png" alt=""><span>小帳本</span></div>
     <button class="tab" data-action="tab" data-tab="list">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h12M9 12h12M9 18h12"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>
       <span>明細</span>
@@ -29,6 +30,7 @@
     </button>
     <button class="fab" data-action="new-tx" aria-label="記一筆">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      <span class="fab-label">記一筆</span>
     </button>
     <button class="tab" data-action="tab" data-tab="accounts">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M2.5 10h19M6.5 15h4"/></svg>
@@ -38,6 +40,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>
       <span>設定</span>
     </button>
+    <div id="sideLedger" class="side-ledger"></div>
   </nav>
 </div>
 <div id="sheet" class="sheet" hidden></div>

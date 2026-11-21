@@ -302,3 +302,88 @@ button.row:active { background: var(--chip); }
   pointer-events: none; text-shadow: 0 1px 2px rgba(0,0,0,.25);
   font-size: 16.8px; max-width: 86vw; text-align: center; animation: rise .15s ease-out;
 }
+
+/* 報表的分類清單（手機：接在圓餅圖下面） */
+.cat-rows { box-shadow: none; margin: 0 -16px -16px; border-radius: 0 0 16px 16px; }
+
+/* ============================================================
+   電腦版（螢幕寬 960px 以上）：左邊固定選單、內容分欄
+   手機版完全不受影響
+   ============================================================ */
+.side-brand, .fab-label, .side-ledger { display: none; }
+
+@media (hover: hover) {
+  .tx:hover, button.row:hover, .crow:hover { background: #f6f8f4; }
+  .icon-btn:hover, .month-label:hover, .cal-btn:hover { background: var(--chip); }
+  .dcell:hover .dnum { background: var(--chip); }
+  .dcell.today:hover .dnum { background: var(--brand); }
+  .stat:hover { border-color: #cfe9df; }
+  .stat.on:hover { border-color: var(--brand); }
+  .chip:hover { box-shadow: 0 0 0 1px var(--brand); }
+  .chip.on:hover { box-shadow: none; }
+  .tb:hover .tb-bar { filter: brightness(.94); }
+  .ledger-pill:hover { filter: brightness(.96); }
+  .keypad button:hover { background: #f6f8f4; }
+  .keypad .k-ok:hover { background: var(--brand); filter: brightness(1.05); }
+}
+
+@media (min-width: 960px) {
+  #app { max-width: none; padding-bottom: 0; padding-left: 240px; }
+  body.no-tabs #app { padding-left: 0; }
+  main { padding: 28px 36px 48px; max-width: 1200px; margin: 0 auto; }
+  main[data-tab="accounts"], main[data-tab="settings"] { max-width: 760px; }
+
+  /* 左邊選單 */
+  .tabbar {
+    top: 0; bottom: 0; right: auto; width: 240px; max-width: none; margin: 0;
+    flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 4px;
+    border-top: 0; border-right: 1px solid var(--line); padding: 22px 14px;
+  }
+  .side-brand { display: flex; order: 0; align-items: center; gap: 10px; font-weight: 700; font-size: 21.6px; padding: 0 8px 18px; }
+  .side-brand img { width: 40px; height: 40px; border-radius: 10px; }
+  .fab {
+    order: 1; width: auto; height: 50px; border-radius: 14px; margin: 0 0 14px;
+    display: flex; gap: 8px; align-items: center; justify-content: center; font-weight: 700;
+    box-shadow: 0 4px 12px rgba(18,138,108,.25);
+  }
+  .fab svg { width: 22px; height: 22px; }
+  .fab-label { display: inline; }
+  .fab:hover { filter: brightness(1.06); }
+  .tab { order: 2; flex: none; flex-direction: row; gap: 12px; font-size: 18px; padding: 10px 12px; border-radius: 12px; color: var(--text2); }
+  .tab svg { padding: 0; width: 24px; height: 24px; }
+  .tab.on svg { background: none; }
+  .tab.on { background: #c8eadd; color: var(--brand); }
+  .tab:hover { background: var(--chip); }
+  .tab.on:hover { background: #c8eadd; }
+  .side-ledger { display: block; order: 3; margin-top: auto; }
+  .side-h { font-size: 14.4px; color: var(--muted); padding: 0 12px 6px; }
+  .side-lg { display: block; width: 100%; text-align: left; padding: 9px 12px; border-radius: 12px; font-size: 16.8px; color: var(--text2); }
+  .side-lg:hover { background: var(--chip); }
+  .side-lg.on { background: var(--chip); color: var(--text); font-weight: 700; }
+  .ledger-pill { display: none; }
+
+  /* 明細：左邊日曆＋統計，右邊明細 */
+  .lay-list { display: grid; grid-template-columns: minmax(340px, 400px) 1fr; gap: 32px; align-items: start; }
+  .lay-side { position: sticky; top: 28px; }
+  .lay-main > .day:first-child { margin-top: 0; }
+  .lay-main > .empty { padding-top: 120px; }
+  .cal-hint { display: none; }
+  .cal-card { padding-bottom: 8px; }
+
+  /* 報表：總額和長條圖並排；圓餅圖和分類清單並排 */
+  .rep-top { display: grid; grid-template-columns: 300px 1fr; gap: 16px; align-items: stretch; margin-bottom: 16px; }
+  .rep-top > .card { margin-bottom: 0; }
+  .rep-top .month-sum { display: flex; flex-direction: column; justify-content: center; }
+  .cat-card { display: grid; grid-template-columns: 300px 1fr; gap: 0 28px; align-items: start; }
+  .cat-card .donut-box { position: sticky; top: 28px; margin: 12px auto; }
+  .cat-card .cat-rows { margin: -16px -16px -16px 0; border-radius: 0 16px 16px 0; border-left: 1px solid var(--line); min-height: 100%; }
+
+  /* 記一筆、表單：畫面中間的視窗 */
+  .sheet {
+    top: 4vh; bottom: 4vh; max-width: 480px; border-radius: 20px; overflow: hidden; padding-top: 0;
+    box-shadow: 0 0 0 100vmax rgba(0,0,0,.42), 0 24px 60px rgba(0,0,0,.25);
+  }
+  .modal { align-items: center; }
+  .modal-card { border-radius: 20px; max-width: 480px; max-height: 86vh; padding-bottom: 16px; }
+  .toast { left: 240px; bottom: 40px; }
+}
