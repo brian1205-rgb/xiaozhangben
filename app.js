@@ -1,12 +1,18 @@
-'use strict';
-
 /* ============================================================
-   小帳本 — 個人記帳 App（PWA）
-   資料全部存在這台裝置的瀏覽器 localStorage 裡。
+   小帳本 — 記帳 App（PWA）
+   2.0.0 起資料存在雲端（Firebase Firestore），用 Google 帳號登入。
+   每個人有自己的「個人帳本」，也可以建立和家人共用的「家用帳本」。
+   舊版存在手機 localStorage 的資料，第一次登入時會搬到個人帳本（手機裡的原始資料不刪）。
    ============================================================ */
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import {
+  initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+  doc, collection, query, where, getDoc, getDocs, setDoc, updateDoc, onSnapshot, writeBatch,
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
-const STORE_KEY = 'xiaozhangben:v1';
-const APP_VERSION = '1.5.0';
+const STORE_KEY = 'xiaozhangben:v1'; // 舊版（1.x）存在手機裡的資料
+const APP_VERSION = '2.0.0';
 // 1.2.0 起支出分類分成「主分類 + 次分類」，資料格式 version 2（舊資料自動轉換）。
 // 1.1.0 起只記支出。舊版的收入／轉帳記錄仍保留在資料與備份檔中，只是不顯示。
 
@@ -114,32 +120,259 @@ function normalize(d) {
   };
 }
 
-// ---------- 儲存 ----------
-let storageOK = true;
-function load() {
+// ---------- 手機裡的小設定（不重要、不同步） ----------
+const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+
+// 舊版存在手機裡的資料（沒有就回傳 null）
+function loadLocal() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (raw) {
-      const d = JSON.parse(raw);
-      if (validData(d)) return normalize(d);
-    }
-  } catch (e) {
-    storageOK = false;
-  }
-  return defaultData();
+    if (raw) { const d = JSON.parse(raw); if (validData(d)) return normalize(d); }
+  } catch {}
+  return null;
 }
-function save() {
-  try {
-    localStorage.setItem(STORE_KEY, JSON.stringify(data));
-    storageOK = true;
-  } catch (e) {
-    storageOK = false;
-    toast('儲存失敗，請先匯出備份');
+
+// ---------- 雲端（Firebase） ----------
+const firebaseConfig = {
+  apiKey: 'AIzaSyAKyW6CjZbb36AQm6VnoCgqfHMRBYpqwxg',
+  authDomain: 'xiaozhangben-7d819.firebaseapp.com',
+  projectId: 'xiaozhangben-7d819',
+  storageBucket: 'xiaozhangben-7d819.firebasestorage.app',
+  messagingSenderId: '874281493317',
+  appId: '1:874281493317:web:859b3870f68846e21d542c',
+};
+const fbApp = initializeApp(firebaseConfig);
+const auth = getAuth(fbApp);
+// 開啟手機端快取：沒網路也能看、能記，連上網路後自動上傳
+const db = initializeFirestore(fbApp, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
+
+/*
+  雲端資料結構
+  ledgers/{帳本id}            帳本：{ type:'personal'|'family', name, owner, memberEmails[], members{uid:{name,email}}, accounts[], categories{} }
+                               個人帳本的 id 固定是 'p_' + uid
+  ledgers/{帳本id}/txs/{id}   每一筆記錄（欄位跟舊版一樣，另外多了 by／byName：誰記的）
+*/
+const cloud = {
+  status: 'init',   // init 載入中、signedOut 未登入、migrating 搬資料中、ready 可以用
+  user: null,
+  email: '',
+  ledgers: [],      // 我能看的帳本（個人＋家用）
+  activeId: null,
+  meta: null,       // 目前帳本的資訊（名稱、成員…）
+  gotMeta: false, gotTxs: false,
+  pending: false,   // 有還沒上傳到雲端的修改
+  unsub: [],
+  loginError: '',
+};
+const myName = () => cloud.user?.displayName || cloud.email.split('@')[0] || '我';
+const activeLedger = () => cloud.ledgers.find((l) => l.id === cloud.activeId) || null;
+const isFamily = () => cloud.meta?.type === 'family';
+const isOwner = () => cloud.meta?.owner === cloud.user?.uid;
+const ledgerLabel = (l) => (l.type === 'personal' ? '👤 個人' : `🏠 ${l.name || '家用'}`);
+
+// 目前顯示的帳本資料（格式跟舊版相同，畫面程式不用改）
+let data = { ...defaultData(), accounts: [], categories: { expense: [], income: [] } };
+// 上次跟雲端同步時的樣子：save() 比對出有改的地方才上傳
+const synced = { meta: '', txs: new Map() };
+const metaJSON = (d) => JSON.stringify({ accounts: d.accounts, categories: d.categories });
+const clean = (o) => JSON.parse(JSON.stringify(o)); // 拿掉 undefined（Firestore 不接受）
+const ledgerRef = (id) => doc(db, 'ledgers', id);
+const txRef = (lid, id) => doc(db, 'ledgers', lid, 'txs', String(id).replace(/\//g, '_'));
+
+// 分批寫入（Firestore 一次最多 500 筆）
+async function commitOps(ops) {
+  for (let i = 0; i < ops.length; i += 400) {
+    const b = writeBatch(db);
+    for (const [kind, ref, val, opt] of ops.slice(i, i + 400)) {
+      if (kind === 'del') b.delete(ref); else b.set(ref, val, opt || {});
+    }
+    await b.commit();
   }
 }
 
-let data = load();
-if (migratedOnLoad) { save(); migratedOnLoad = false; } // 舊資料轉換完立刻存起來
+// 把目前的 data 跟雲端比對，有改的才寫上去（離線時會先存在手機，連上網路再上傳）
+function save() {
+  const lid = cloud.activeId;
+  if (cloud.status !== 'ready' || !lid || !cloud.gotMeta || !cloud.gotTxs) return;
+  lsSet('xiaozhangben:prefs:' + lid, JSON.stringify(data.prefs || {}));
+  const ops = [];
+  const mj = metaJSON(data);
+  if (mj !== synced.meta) {
+    ops.push(['set', ledgerRef(lid), clean({ accounts: data.accounts, categories: data.categories, updatedAt: Date.now() }), { merge: true }]);
+    synced.meta = mj;
+  }
+  const seen = new Set();
+  for (const t of data.txs) {
+    seen.add(t.id);
+    const j = JSON.stringify(t);
+    if (synced.txs.get(t.id) !== j) { ops.push(['set', txRef(lid, t.id), clean(t)]); synced.txs.set(t.id, j); }
+  }
+  for (const id of [...synced.txs.keys()]) {
+    if (!seen.has(id)) { ops.push(['del', txRef(lid, id)]); synced.txs.delete(id); }
+  }
+  if (!ops.length) return;
+  commitOps(ops).catch((e) => {
+    console.error(e);
+    toast(e.code === 'permission-denied' ? '沒有權限修改這本帳本' : '上傳到雲端失敗，請檢查網路');
+  });
+}
+
+function stopListening() {
+  cloud.unsub.forEach((f) => { try { f(); } catch {} });
+  cloud.unsub = [];
+}
+
+// 切換到某一本帳本並開始即時同步
+function openLedger(id) {
+  for (const f of cloud.unsub.splice(1)) { try { f(); } catch {} } // 保留第 0 個（帳本清單）
+  cloud.activeId = id;
+  cloud.meta = null; cloud.gotMeta = false; cloud.gotTxs = false;
+  synced.meta = ''; synced.txs = new Map();
+  let prefs = {};
+  try { prefs = JSON.parse(lsGet('xiaozhangben:prefs:' + id) || '{}') || {}; } catch {}
+  data = { version: 2, accounts: [], categories: { expense: [], income: [] }, txs: [], prefs };
+  ui.reportAccs.clear(); ui.reportSel = null;
+  lsSet('xiaozhangben:active:' + cloud.user.uid, id);
+  render();
+
+  const onErr = (e) => {
+    console.error(e);
+    if (e.code === 'permission-denied' && id !== 'p_' + cloud.user.uid) {
+      toast('你已經不在這本帳本的成員裡');
+      openLedger('p_' + cloud.user.uid);
+    }
+  };
+  cloud.unsub.push(onSnapshot(ledgerRef(id), (snap) => {
+    if (!snap.exists()) return;
+    const m = snap.data();
+    cloud.meta = { id, ...m };
+    const d = normalize({ accounts: m.accounts || [], categories: { expense: m.categories?.expense || [], income: m.categories?.income || [] }, txs: [] });
+    const mj = metaJSON(d);
+    // 只有別人（或另一支手機）改過才換掉，避免打斷正在編輯的畫面
+    if (mj !== synced.meta) { data.accounts = d.accounts; data.categories = d.categories; synced.meta = mj; }
+    cloud.gotMeta = true;
+    // 家用帳本：把自己的名字記在成員名單上，讓大家看得到是誰記的
+    if (m.type === 'family' && m.members?.[cloud.user.uid]?.name !== myName()) {
+      updateDoc(ledgerRef(id), { [`members.${cloud.user.uid}`]: { name: myName(), email: cloud.email } }).catch(() => {});
+    }
+    render();
+  }, onErr));
+  cloud.unsub.push(onSnapshot(collection(db, 'ledgers', id, 'txs'), { includeMetadataChanges: true }, (snap) => {
+    cloud.pending = snap.metadata.hasPendingWrites;
+    if (snap.docChanges().length || !cloud.gotTxs) {
+      const txs = [];
+      for (const ds of snap.docs) {
+        const t = ds.data();
+        if (t && t.id) txs.push(t);
+      }
+      data.txs = normalize({ accounts: [], categories: { expense: [], income: [] }, txs }).txs;
+      // 用正規化後的內容當作比對基準
+      synced.txs = new Map(data.txs.map((t) => [t.id, JSON.stringify(t)]));
+      cloud.gotTxs = true;
+    }
+    render();
+  }, onErr));
+}
+
+// 第一次登入：建立個人帳本，並把手機裡的舊資料搬上去
+async function ensurePersonal() {
+  const uid = cloud.user.uid;
+  const ref = ledgerRef('p_' + uid);
+  const local = loadLocal();
+  const doneKey = 'xiaozhangben:migrated:' + uid;
+  let snap = null, exists = false;
+  try {
+    snap = await getDoc(ref);
+    exists = snap.exists();
+  } catch (e) {
+    if (!navigator.onLine) return;
+    // 安全規則不允許讀取「還不存在」的帳本，所以讀不到 = 還沒建立
+    if (e.code !== 'permission-denied') throw e;
+  }
+  const needMigrate = local && !lsGet(doneKey) && local.txs.length > 0;
+  if (exists && !needMigrate) return;
+
+  cloud.status = 'migrating'; render();
+  if (!exists) {
+    const base = local || defaultData();
+    await setDoc(ref, clean({
+      type: 'personal', name: '個人', owner: uid, ownerEmail: cloud.email, memberEmails: [cloud.email],
+      members: { [uid]: { name: myName(), email: cloud.email } },
+      accounts: base.accounts, categories: base.categories, createdAt: Date.now(),
+    }));
+  } else {
+    // 雲端已經有個人帳本：空的就直接用手機的分類，已經有記錄就把手機的分類／付款方式合併進去
+    const cur = snap.data();
+    const has = await getDocs(collection(db, 'ledgers', 'p_' + uid, 'txs'));
+    let accounts = local.accounts, categories = local.categories;
+    if (!has.empty) {
+      accounts = [...(cur.accounts || [])];
+      for (const a of local.accounts) if (!accounts.some((x) => x.id === a.id)) accounts.push(a);
+      const exp = (cur.categories?.expense || []).map((c) => ({ ...c, subs: [...(c.subs || [])] }));
+      for (const c of local.categories.expense) {
+        const hit = exp.find((x) => x.id === c.id);
+        if (!hit) exp.push(c);
+        else for (const s of c.subs) if (!hit.subs.some((x) => x.id === s.id)) hit.subs.push(s);
+      }
+      categories = { expense: exp, income: cur.categories?.income || local.categories.income };
+    }
+    await setDoc(ref, clean({ accounts, categories, updatedAt: Date.now() }), { merge: true });
+  }
+  if (local && local.txs.length && !lsGet(doneKey)) {
+    await commitOps(local.txs.map((t) => ['set', txRef('p_' + uid, t.id), clean(t)]));
+    lsSet(doneKey, String(Date.now()));
+    setTimeout(() => toast(`已把手機裡的 ${local.txs.filter((t) => t.type === 'expense').length} 筆記錄搬到雲端`), 600);
+  }
+}
+
+async function startSession(user) {
+  cloud.user = user;
+  cloud.email = (user.email || '').toLowerCase();
+  cloud.status = 'init'; render();
+  try {
+    await ensurePersonal();
+  } catch (e) {
+    console.error(e);
+    cloud.status = 'signedOut';
+    cloud.loginError = '連線到雲端失敗，請確認網路後再試一次。（' + (e.code || e.message) + '）';
+    render();
+    return;
+  }
+  cloud.status = 'ready';
+  stopListening();
+  // 帳本清單（個人＋我被加入的家用帳本）
+  cloud.unsub.push(onSnapshot(query(collection(db, 'ledgers'), where('memberEmails', 'array-contains', cloud.email)), (snap) => {
+    const order = (l) => (l.type === 'personal' ? 0 : 1);
+    cloud.ledgers = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => order(a) - order(b) || (a.createdAt || 0) - (b.createdAt || 0));
+    if (cloud.activeId && !cloud.ledgers.some((l) => l.id === cloud.activeId) && !snap.metadata.fromCache) openLedger('p_' + cloud.user.uid);
+    else render();
+  }, (e) => console.error(e)));
+  const saved = lsGet('xiaozhangben:active:' + user.uid);
+  openLedger(saved || 'p_' + user.uid);
+}
+
+async function login() {
+  cloud.loginError = '';
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+  try {
+    await signInWithPopup(auth, provider);
+  } catch (e) {
+    if (['auth/popup-blocked', 'auth/operation-not-supported-in-this-environment', 'auth/cancelled-popup-request'].includes(e.code)) {
+      try { await signInWithRedirect(auth, provider); return; } catch (e2) { e = e2; }
+    }
+    if (e.code === 'auth/popup-closed-by-user') return;
+    cloud.loginError = '登入失敗：' + (e.code || e.message);
+    render();
+  }
+}
+
+async function logout() {
+  if (!confirm('確定要登出嗎？\n資料都在雲端，下次登入同一個 Google 帳號就會回來。')) return;
+  stopListening();
+  await signOut(auth);
+}
 
 // ---------- 畫面狀態 ----------
 const currentYM = () => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() + 1 }; };
@@ -188,8 +421,49 @@ function daysForAvg() {
 
 // ---------- 主畫面 ----------
 function render() {
-  $('#view').innerHTML = VIEWS[ui.tab]();
+  const ready = cloud.status === 'ready';
+  document.body.classList.toggle('no-tabs', !ready);
+  if (!ready) { $('#view').innerHTML = viewGate(); return; }
+  $('#view').innerHTML = cloud.gotMeta && cloud.gotTxs ? VIEWS[ui.tab]() : ledgerBar() + `<div class="empty"><div class="spinner"></div>載入帳本中…</div>`;
   document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === ui.tab));
+}
+
+// 登入畫面／載入中
+function viewGate() {
+  if (cloud.status === 'signedOut') {
+    return `<div class="gate">
+      <img class="gate-icon" src="icon-192.png" alt="">
+      <h1>小帳本</h1>
+      <p>用 Google 帳號登入，記帳資料會存在雲端。換手機也不會不見，還可以跟家人一起記。</p>
+      <button class="btn-primary" data-action="login">
+        <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C36.9 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
+        用 Google 登入
+      </button>
+      ${cloud.loginError ? `<p class="gate-err">${esc(cloud.loginError)}</p>` : ''}
+      ${loadLocal()?.txs.length ? `<p class="hint">登入後，這支手機裡原本的記錄會自動搬到你的個人帳本。</p>` : ''}
+    </div>`;
+  }
+  const msg = cloud.status === 'migrating' ? '正在把手機裡的記錄搬到雲端…<br>請不要關掉 App' : '載入中…';
+  return `<div class="gate"><div class="spinner"></div><p>${msg}</p></div>`;
+}
+
+// 帳本切換：月份列左邊的小按鈕（只有一本帳本時不顯示）
+function ledgerPill() {
+  if (cloud.ledgers.length < 2) return '';
+  const cur = activeLedger() || cloud.meta;
+  const fam = cur?.type === 'family';
+  return `<button class="ledger-pill${fam ? ' fam' : ''}" data-action="choose-ledger" aria-label="切換帳本，目前是${esc(cur ? ledgerLabel(cur) : '')}">
+    <span class="lp-icon">${fam ? '🏠' : '👤'}</span><span class="lp-name">${esc(fam ? (cur.name || '家用') : '個人')}</span></button>`;
+}
+const ledgerBar = () => (cloud.ledgers.length < 2 ? '' : `<div class="monthbar">${ledgerPill()}</div>`);
+
+function chooseLedger() {
+  $('#modal').innerHTML = `<div class="modal-card" role="dialog" aria-modal="true" aria-label="切換帳本">
+    <div class="modal-head"><button class="text-btn" data-action="close-layer">取消</button><h3>切換帳本</h3><span class="text-btn-spacer"></span></div>
+    <div class="rows ledger-list">${cloud.ledgers.map((l) => `<button class="row${l.id === cloud.activeId ? ' on' : ''}" data-action="switch-ledger" data-id="${esc(l.id)}">
+      <span>${esc(ledgerLabel(l))}</span><span class="row-val">${l.id === cloud.activeId ? '✓ 目前' : l.type === 'family' ? `${(l.memberEmails || []).length} 人` : '只有你看得到'}</span></button>`).join('')}</div>
+  </div>`;
+  openLayer('modal');
 }
 
 function monthBar(withCal = false) {
@@ -199,6 +473,7 @@ function monthBar(withCal = false) {
       </button>`
     : '';
   return `<div class="monthbar">
+    ${ledgerPill()}
     <button class="icon-btn" data-action="month" data-d="-1" aria-label="上個月">‹</button>
     <button class="month-label" data-action="month-now" title="回到本月">${ui.ym.y} 年 ${ui.ym.m} 月</button>
     <button class="icon-btn" data-action="month" data-d="1" aria-label="下個月">›</button>
@@ -286,7 +561,8 @@ function txRow(t) {
   const c = findCat('expense', t.categoryId);
   const s = findSub(c, t.subCategoryId);
   const title = s ? s.name : (c?.name ?? '未分類');
-  const sub = [s ? c.name : null, accName(t.accountId), t.note || null].filter(Boolean).join(' · ');
+  const who = isFamily() && t.by ? (t.by === cloud.user.uid ? '我' : (cloud.meta.members?.[t.by]?.name || t.byName || '家人')) : null;
+  const sub = [s ? c.name : null, accName(t.accountId), t.note || null, who].filter(Boolean).join(' · ');
   return `<button class="tx" data-action="edit-tx" data-id="${esc(t.id)}">
     <span class="tx-icon">${esc(c?.icon ?? '❔')}</span>
     <span class="tx-main"><span class="tx-name">${esc(title)}</span><span class="tx-sub">${esc(sub)}</span></span>
@@ -327,7 +603,6 @@ function viewList() {
   }
   const txs = pool.sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
   let html = '';
-  if (!storageOK) html += `<div class="banner">⚠️ 這個瀏覽器目前無法儲存資料（可能是私密瀏覽模式），關掉後記錄會消失。</div>`;
   html += monthBar(true) + calendarCard(byDay) + rangeStats(byDay);
   if (!txs.length) {
     return html + `<div class="empty"><div class="big">📝</div>${emptyMsg}<br>按下方 ＋ 記一筆吧</div>`;
@@ -526,24 +801,50 @@ function viewPayments() {
 
 // ---------- 設定 ----------
 function viewSettings() {
-  const persist = ui.persisted === true ? '已鎖定（不會被自動清除）' : ui.persisted === false ? '一般' : '—';
-  return `<section class="group"><h2>分類</h2><div class="rows">
-      <button class="row" data-action="manage-cats" data-type="expense"><span>支出分類</span><span class="row-val">${data.categories.expense.length} 個主分類 ›</span></button>
+  const fam = isFamily();
+  const cur = cloud.meta;
+  const hasFamily = cloud.ledgers.some((l) => l.type === 'family');
+  const members = fam ? (cur.memberEmails || []) : [];
+  const nameOf = (email) => Object.values(cur.members || {}).find((m) => m.email === email)?.name;
+  const membersHtml = fam ? `<section class="group"><h2>「${esc(cur.name || '家用')}」的成員</h2><div class="rows">
+      ${members.map((em) => `<div class="row member-row">
+        <span class="tx-main"><span>${esc(nameOf(em) || em.split('@')[0])}${em === cloud.email ? '（我）' : ''}${em === cur.ownerEmail ? ' <small class="badge">建立者</small>' : ''}</span><span class="tx-sub">${esc(em)}</span></span>
+        ${isOwner() && em !== cloud.email ? `<button class="text-btn danger" data-action="remove-member" data-email="${esc(em)}">移除</button>` : ''}
+      </div>`).join('')}
+      ${isOwner() ? `<button class="row" data-action="add-member"><span>＋ 加入家人</span><span class="row-val">用 Gmail ›</span></button>` : ''}
+    </div>
+    <p class="hint">${isOwner() ? '加入家人的 Gmail 後，請他用那個 Google 帳號登入小帳本，就會看到這本帳本。' : '只有建立者可以加入或移除成員。'}</p>
+    ${isOwner() ? `<div class="rows" style="margin-top:12px"><button class="row danger" data-action="delete-family"><span>刪除這本家用帳本</span></button></div>` : ''}
+    </section>` : '';
+  return `<section class="group"><h2>帳號</h2><div class="rows">
+      <div class="row member-row"><span class="tx-main"><span>${esc(myName())}</span><span class="tx-sub">${esc(cloud.email)}</span></span>
+        <button class="text-btn" data-action="logout">登出</button></div>
     </div></section>
-    <section class="group"><h2>範例資料</h2><div class="rows">
+    <section class="group"><h2>帳本</h2><div class="rows">
+      ${cloud.ledgers.map((l) => `<button class="row${l.id === cloud.activeId ? ' on' : ''}" data-action="switch-ledger" data-id="${esc(l.id)}">
+        <span>${esc(ledgerLabel(l))}</span><span class="row-val">${l.id === cloud.activeId ? '✓ 目前' : '切換 ›'}</span></button>`).join('')}
+      ${hasFamily ? '' : `<button class="row" data-action="create-family"><span>＋ 建立家用帳本</span><span class="row-val">跟家人一起記 ›</span></button>`}
+    </div>
+    <p class="hint">個人帳本只有你看得到；家用帳本你和加入的家人都看得到、都能記。</p>
+    </section>
+    ${membersHtml}
+    <section class="group"><h2>分類</h2><div class="rows">
+      <button class="row" data-action="manage-cats" data-type="expense"><span>支出分類</span><span class="row-val">${data.categories.expense.length} 個主分類 ›</span></button>
+    </div>${fam ? '<p class="hint">家用帳本的分類和付款方式是全家共用的。</p>' : ''}</section>
+    ${fam ? '' : `<section class="group"><h2>範例資料</h2><div class="rows">
       ${demoCount()
         ? `<button class="row danger" data-action="remove-demo"><span>移除範例資料</span><span class="row-val">${demoCount()} 筆 ›</span></button>`
         : `<button class="row" data-action="add-demo"><span>加入範例資料</span><span class="row-val">近 3 個月 ›</span></button>`}
     </div>
     <p class="hint">想先看看有資料時的樣子，可以加入一些假的支出記錄。範例資料可以一鍵移除，不會動到你自己記的帳。</p>
-    </section>
-    <section class="group"><h2>資料備份</h2><div class="rows">
+    </section>`}
+    <section class="group"><h2>資料備份（目前這本帳本）</h2><div class="rows">
       <button class="row" data-action="export-json"><span>匯出備份檔</span><span class="row-val">.json ›</span></button>
-      <button class="row" data-action="import-json"><span>從備份檔還原</span><span class="row-val">›</span></button>
+      ${fam && !isOwner() ? '' : `<button class="row" data-action="import-json"><span>從備份檔還原</span><span class="row-val">›</span></button>`}
       <button class="row" data-action="export-csv"><span>匯出成 Excel 可開的檔案</span><span class="row-val">.csv ›</span></button>
-      <button class="row danger" data-action="clear-all"><span>清除所有資料</span></button>
+      ${fam ? '' : `<button class="row danger" data-action="clear-all"><span>清除個人帳本的所有資料</span></button>`}
     </div>
-    <p class="hint">資料只存在<b>這支手機的瀏覽器</b>裡，不會上傳到任何地方。換手機或清除瀏覽器資料前，記得先匯出備份檔（建議每月一次，存到雲端硬碟或傳給自己）。</p>
+    <p class="hint">記帳資料存在雲端（Google Firebase），換手機只要登入同一個 Google 帳號就會回來。沒有網路時也能記，連上網路後會自動上傳。想多一份保險，可以偶爾匯出備份檔。</p>
     </section>
     <section class="group"><h2>安裝到手機主畫面</h2><div class="rows">
       <div class="row"><span>iPhone（Safari）</span><span class="row-val">分享 → 加入主畫面</span></div>
@@ -551,7 +852,7 @@ function viewSettings() {
     </div></section>
     <section class="group"><h2>關於</h2><div class="rows">
       <div class="row"><span>記錄筆數</span><span class="row-val">${data.txs.filter((t) => t.type === 'expense').length}</span></div>
-      <div class="row"><span>儲存狀態</span><span class="row-val">${persist}</span></div>
+      <div class="row"><span>同步狀態</span><span class="row-val">${cloud.pending ? '⏳ 等待上傳（沒有網路？）' : '✓ 已同步到雲端'}</span></div>
       <div class="row"><span>版本</span><span class="row-val">${APP_VERSION}</span></div>
     </div></section>`;
 }
@@ -776,6 +1077,8 @@ function saveEntry() {
     note: e.note.trim(),
     createdAt: old?.createdAt ?? Date.now(),
     updatedAt: Date.now(),
+    by: old?.by ?? cloud.user.uid,          // 誰記的（家用帳本會顯示）
+    byName: old?.byName ?? myName(),
     ...(old?.demo ? { demo: true } : {}), // 修改範例資料後仍算範例資料
   };
   if (old) data.txs[data.txs.indexOf(old)] = tx;
@@ -990,8 +1293,9 @@ $('#importFile').addEventListener('change', async (ev) => {
     const d = JSON.parse(await file.text());
     if (!validData(d)) throw new Error('格式不符');
     const incoming = normalize(d);
-    if (!confirm(`備份檔裡有 ${incoming.txs.length} 筆記錄。\n還原會「取代」目前的 ${data.txs.length} 筆記錄，確定嗎？`)) return;
-    data = incoming;
+    const where = activeLedger() ? ledgerLabel(activeLedger()) : '目前的帳本';
+    if (!confirm(`備份檔裡有 ${incoming.txs.length} 筆記錄。\n還原會「取代」${where}目前的 ${data.txs.length} 筆記錄，確定嗎？`)) return;
+    data = { ...incoming, prefs: data.prefs };
     save(); render(); toast('已還原備份');
   } catch (err) {
     alert('這個檔案無法讀取，請確認是「小帳本」匯出的備份檔。');
@@ -1022,7 +1326,7 @@ const actions = {
     render();
   },
   'range': (el) => { ui.range = el.dataset.r; render(); },
-  'new-tx': () => openEntry(null),
+  'new-tx': () => { if (cloud.status === 'ready' && cloud.gotMeta && cloud.gotTxs) openEntry(null); },
   'edit-tx': (el) => { const t = data.txs.find((x) => x.id === el.dataset.id); if (t) openEntry(t); },
   'close-layer': () => closeLayer(),
   'pick-cat': (el) => {
@@ -1101,11 +1405,78 @@ const actions = {
     data.txs = data.txs.filter((t) => !t.demo);
     save(); render(); toast('已移除範例資料');
   },
+  'login': () => login(),
+  'logout': () => logout(),
+  'choose-ledger': () => chooseLedger(),
+  'switch-ledger': (el) => {
+    const id = el.dataset.id;
+    if (layers.length) closeLayer();
+    if (id === cloud.activeId) return;
+    openLedger(id);
+    const l = cloud.ledgers.find((x) => x.id === id);
+    if (l) toast(`切換到${ledgerLabel(l)}`);
+  },
+  'create-family': () => openForm({
+    title: '建立家用帳本',
+    fields: [{ key: 'name', label: '帳本名稱', value: '家用', placeholder: '例如：家用、潘家', max: 10 }],
+    onSave: (v) => {
+      const name = v.name || '家用';
+      const id = 'f_' + uid();
+      const me = cloud.user.uid;
+      // 分類和付款方式先複製目前帳本的，之後可以另外改
+      if (!navigator.onLine) { toast('建立家用帳本需要網路'); return false; }
+      toast('建立中…');
+      // 等雲端真的建好再打開（不然安全規則會擋住還不存在的帳本）
+      setDoc(ledgerRef(id), clean({
+        type: 'family', name, owner: me, ownerEmail: cloud.email, memberEmails: [cloud.email],
+        members: { [me]: { name: myName(), email: cloud.email } },
+        accounts: data.accounts, categories: data.categories, createdAt: Date.now(),
+      }))
+        .then(() => { openLedger(id); ui.tab = 'settings'; render(); toast(`已建立「${name}」，可以加入家人了`); })
+        .catch((e) => { console.error(e); toast('建立失敗：' + (e.code || e.message)); });
+    },
+  }),
+  'add-member': () => openForm({
+    title: '加入家人',
+    fields: [{ key: 'email', label: '家人的 Gmail', value: '', placeholder: '例如：mom@gmail.com', max: 80 }],
+    onSave: (v) => {
+      const em = v.email.trim().toLowerCase();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) { toast('請輸入正確的 Email'); return false; }
+      const list = cloud.meta.memberEmails || [];
+      if (list.includes(em)) { toast('這個人已經在成員裡了'); return false; }
+      if (list.length >= 20) { toast('成員最多 20 人'); return false; }
+      updateDoc(ledgerRef(cloud.activeId), { memberEmails: [...list, em] })
+        .then(() => toast('已加入，請家人用這個 Google 帳號登入'))
+        .catch((e) => { console.error(e); toast('加入失敗：' + (e.code || e.message)); });
+    },
+  }),
+  'remove-member': (el) => {
+    const em = el.dataset.email;
+    if (!confirm(`要把 ${em} 移出這本帳本嗎？\n移除後他就看不到這本帳本了（他之前記的帳會留著）。`)) return;
+    updateDoc(ledgerRef(cloud.activeId), { memberEmails: (cloud.meta.memberEmails || []).filter((x) => x !== em) })
+      .then(() => toast('已移除'))
+      .catch((e) => { console.error(e); toast('移除失敗：' + (e.code || e.message)); });
+  },
+  'delete-family': async () => {
+    if (!isFamily() || !isOwner()) return;
+    const name = cloud.meta.name || '家用';
+    if (!confirm(`確定要刪除「${name}」嗎？\n裡面 ${data.txs.length} 筆記錄會全部刪除，所有成員都看不到，而且無法復原。\n建議先「匯出備份檔」。`)) return;
+    if (!navigator.onLine) { toast('刪除帳本需要網路'); return; }
+    const id = cloud.activeId;
+    const ids = data.txs.map((t) => t.id);
+    openLedger('p_' + cloud.user.uid);
+    try {
+      await commitOps(ids.map((tid) => ['del', txRef(id, tid)]));
+      const b = writeBatch(db); b.delete(ledgerRef(id)); await b.commit();
+      toast(`已刪除「${name}」`);
+    } catch (e) { console.error(e); toast('刪除失敗：' + (e.code || e.message)); }
+  },
   'export-json': () => exportJSON(),
   'import-json': () => $('#importFile').click(),
   'export-csv': () => exportCSV(),
   'clear-all': () => {
-    if (!confirm('這會刪除所有記錄、帳戶和分類設定，而且無法復原。\n建議先「匯出備份檔」。\n\n確定要全部清除嗎？')) return;
+    if (isFamily()) return;
+    if (!confirm('這會刪除個人帳本（雲端）的所有記錄、付款方式和分類設定，而且無法復原。\n建議先「匯出備份檔」。\n\n確定要全部清除嗎？')) return;
     data = defaultData(); save(); render(); toast('已清除');
   },
 };
@@ -1220,13 +1591,17 @@ document.addEventListener('keydown', (ev) => {
 
 // ---------- 啟動 ----------
 render();
+getRedirectResult(auth).catch((e) => { cloud.loginError = '登入失敗：' + (e.code || e.message); render(); });
+onAuthStateChanged(auth, (user) => {
+  if (user) { if (cloud.user?.uid !== user.uid) startSession(user); return; }
+  stopListening();
+  Object.assign(cloud, { status: 'signedOut', user: null, email: '', ledgers: [], activeId: null, meta: null, gotMeta: false, gotTxs: false });
+  data = { ...defaultData(), accounts: [], categories: { expense: [], income: [] } };
+  layers.length = 0; hideLayer('sheet'); hideLayer('modal');
+  ui.tab = 'list';
+  render();
+});
 
-if (navigator.storage?.persist) {
-  navigator.storage.persisted()
-    .then((p) => p || navigator.storage.persist())
-    .then((p) => { ui.persisted = p; if (ui.tab === 'settings') render(); })
-    .catch(() => {});
-}
 
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   // updateViaCache:'none'：檢查 sw.js 有沒有新版時不要用手機裡的舊檔
