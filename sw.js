@@ -1,5 +1,5 @@
 // 離線快取：有網路時抓最新版，沒網路時用快取，讓 App 在飛航模式也能開
-const CACHE = 'xiaozhangben-v6';
+const CACHE = 'xiaozhangben-v7';
 const ASSETS = ['./', './index.html', './style.css', './app.js', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {

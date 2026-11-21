@@ -6,7 +6,7 @@
    ============================================================ */
 
 const STORE_KEY = 'xiaozhangben:v1';
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.4.1';
 // 1.2.0 起支出分類分成「主分類 + 次分類」，資料格式 version 2（舊資料自動轉換）。
 // 1.1.0 起只記支出。舊版的收入／轉帳記錄仍保留在資料與備份檔中，只是不顯示。
 
@@ -1000,8 +1000,6 @@ const actions = {
     if (!id) ui.reportAccs.clear();
     else if (ui.reportAccs.has(id)) ui.reportAccs.delete(id);
     else ui.reportAccs.add(id);
-    // 每個帳戶都選了，等於全部
-    if (ui.reportAccs.size && data.accounts.every((a) => ui.reportAccs.has(a.id))) ui.reportAccs.clear();
     ui.reportSel = null;
     render();
   },
