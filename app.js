@@ -12,7 +12,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 const STORE_KEY = 'xiaozhangben:v1'; // 舊版（1.x）存在手機裡的資料
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.0.1';
 // 1.2.0 起支出分類分成「主分類 + 次分類」，資料格式 version 2（舊資料自動轉換）。
 // 1.1.0 起只記支出。舊版的收入／轉帳記錄仍保留在資料與備份檔中，只是不顯示。
 
@@ -456,15 +456,6 @@ function ledgerPill() {
     <span class="lp-icon">${fam ? '🏠' : '👤'}</span><span class="lp-name">${esc(fam ? (cur.name || '家用') : '個人')}</span></button>`;
 }
 const ledgerBar = () => (cloud.ledgers.length < 2 ? '' : `<div class="monthbar">${ledgerPill()}</div>`);
-
-function chooseLedger() {
-  $('#modal').innerHTML = `<div class="modal-card" role="dialog" aria-modal="true" aria-label="切換帳本">
-    <div class="modal-head"><button class="text-btn" data-action="close-layer">取消</button><h3>切換帳本</h3><span class="text-btn-spacer"></span></div>
-    <div class="rows ledger-list">${cloud.ledgers.map((l) => `<button class="row${l.id === cloud.activeId ? ' on' : ''}" data-action="switch-ledger" data-id="${esc(l.id)}">
-      <span>${esc(ledgerLabel(l))}</span><span class="row-val">${l.id === cloud.activeId ? '✓ 目前' : l.type === 'family' ? `${(l.memberEmails || []).length} 人` : '只有你看得到'}</span></button>`).join('')}</div>
-  </div>`;
-  openLayer('modal');
-}
 
 function monthBar(withCal = false) {
   const cal = withCal
@@ -1407,7 +1398,15 @@ const actions = {
   },
   'login': () => login(),
   'logout': () => logout(),
-  'choose-ledger': () => chooseLedger(),
+  // 點一下就換到下一本帳本（兩本時就是來回切換）
+  'choose-ledger': () => {
+    const list = cloud.ledgers;
+    if (list.length < 2) return;
+    const i = list.findIndex((l) => l.id === cloud.activeId);
+    const next = list[(i + 1) % list.length];
+    openLedger(next.id);
+    toast(`切換到 ${ledgerLabel(next)}`);
+  },
   'switch-ledger': (el) => {
     const id = el.dataset.id;
     if (layers.length) closeLayer();

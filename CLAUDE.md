@@ -5,7 +5,7 @@
 
 - 網站：https://brian1205-rgb.github.io/xiaozhangben/
 - 存放區：https://github.com/brian1205-rgb/xiaozhangben（Public，`main` 分支根目錄就是網站）
-- 目前版本：**2.0.0**（`app.js` 的 `APP_VERSION`）
+- 目前版本：**2.0.1**（`app.js` 的 `APP_VERSION`）
 
 ## 多台電腦開發（重要）
 使用者會在不同電腦開發，GitHub 是唯一的正本：
@@ -29,7 +29,7 @@
 index.html            頁面骨架、底部選單
 app.js                全部程式（ES module，無框架、無打包；從 gstatic CDN 載入 Firebase 10.14.1）
 style.css             樣式（固定淺色）
-sw.js                 Service Worker：network-first 離線快取，抓檔用 cache:no-cache（GitHub Pages 有 max-age=600，不這樣手機會用 10 分鐘內的舊檔）。改了檔案要把 CACHE 版本 +1（目前 xiaozhangben-v10）；gstatic 的 Firebase 檔案用 cache-first
+sw.js                 Service Worker：network-first 離線快取，抓檔用 cache:no-cache（GitHub Pages 有 max-age=600，不這樣手機會用 10 分鐘內的舊檔）。改了檔案要把 CACHE 版本 +1（目前 xiaozhangben-v11）；gstatic 的 Firebase 檔案用 cache-first
 manifest.webmanifest  PWA 設定
 icon-192.png / icon-512.png / apple-touch-icon.png   App 圖示（手繪暖色風）
 _config.yml           GitHub Pages 設定：排除 CLAUDE.md；_ 開頭資料夾本來就不會發佈
@@ -72,7 +72,7 @@ _dev/tools/           開發工具（不會出現在網站上）
 - 記一筆：計算機鍵盤（可 + −）、主分類格子 → 次分類小按鈕（可不選）、付款方式、日期、備註。
 - 報表：上方可多選帳戶（不選＝全部，只記在當次開啟，不存檔），依選的帳戶算；近 12 個月支出長條圖（虛線＝有記帳月份的平均，點長條切換月份）；主分類圓餅圖（前 5 名＋其他），點主分類展開次分類明細。
 - 付款：每種付款方式本月花多少。
-- 登入／帳本：Google 登入；個人帳本＋家用帳本；有兩本以上時月份列左邊有帳本按鈕可切換；家用帳本明細顯示是誰記的。
+- 登入／帳本：Google 登入；個人帳本＋家用帳本；有兩本以上時月份列左邊有帳本按鈕，點一下就換到下一本；家用帳本明細顯示是誰記的。
 - 設定：帳號（登出）、帳本清單／建立家用帳本、家用帳本成員（建立者可用 Gmail 加入／移除、刪除帳本）、分類管理（主/次分類新增、改名、刪除、排序）、範例資料、匯出 JSON 備份／還原、匯出 CSV、清除資料。
 
 ## 測試方式
