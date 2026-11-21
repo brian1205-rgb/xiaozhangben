@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- 小帳本 App 圖示：手繪風、暖色系。改這個檔案後執行 tools\render-icons.ps1 產生 PNG。 -->
+  <defs>
+    <!-- 讓線條微微抖動，看起來像手畫的 -->
+    <filter id="rough" x="-10%" y="-10%" width="120%" height="120%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="7" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="7" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <!-- 紙張顆粒 -->
+    <filter id="grain" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="3"/>
+      <feColorMatrix values="0 0 0 0 0.45  0 0 0 0 0.28  0 0 0 0 0.15  0 0 0 0.07 0"/>
+    </filter>
+  </defs>
+
+  <!-- 背景：奶油杏色 + 紙張顆粒 -->
+  <rect width="512" height="512" fill="#FCEBD0"/>
+  <rect width="512" height="512" filter="url(#grain)"/>
+
+  <g transform="translate(256 256) scale(1.0) translate(-269 -272)" filter="url(#rough)"
+     stroke="#5B3B2B" stroke-linecap="round" stroke-linejoin="round">
+
+    <!-- 本子陰影 -->
+    <rect x="146" y="140" width="220" height="270" rx="24" fill="#E8C49A" stroke="none"/>
+
+    <!-- 本子封面 -->
+    <rect x="134" y="126" width="220" height="270" rx="24" fill="#EE8B55" stroke-width="10"/>
+    <!-- 書背 -->
+    <path d="M182 128 V394" fill="none" stroke-width="8"/>
+    <path d="M136 150 Q136 128 158 128 H182 V394 H158 Q136 394 136 372 Z" fill="#D06A3E" stroke="none"/>
+    <path d="M182 128 V394" fill="none" stroke-width="8"/>
+    <!-- 書背上的手繪斜線陰影 -->
+    <path d="M146 180 l22 -16 M146 214 l22 -16 M146 318 l22 -16 M146 352 l22 -16" fill="none" stroke="#A9512C" stroke-width="5"/>
+    <!-- 線圈 -->
+    <circle cx="160" cy="246" r="10" fill="#FCEBD0" stroke-width="6"/>
+    <circle cx="160" cy="280" r="10" fill="#FCEBD0" stroke-width="6"/>
+
+    <!-- 封面標籤 -->
+    <rect x="208" y="166" width="118" height="76" rx="12" fill="#FFF7EA" stroke-width="7"/>
+    <path d="M226 192 H306 M226 216 H284" fill="none" stroke-width="7"/>
+
+    <!-- 金幣 -->
+    <circle cx="334" cy="350" r="74" fill="#F6C453" stroke-width="10"/>
+    <circle cx="334" cy="350" r="54" fill="none" stroke="#D9962B" stroke-width="6" stroke-dasharray="14 10"/>
+    <path d="M358 322 C346 308 308 310 310 334 C312 354 356 346 358 368 C360 392 318 396 304 378"
+          fill="none" stroke-width="10"/>
+    <path d="M334 296 V404" fill="none" stroke-width="9"/>
+    <!-- 金幣反光 -->
+    <path d="M284 318 Q290 300 306 292" fill="none" stroke="#FFF3C8" stroke-width="8"/>
+
+    <!-- 小星星 -->
+    <path d="M394 168 v34 M377 185 h34" fill="none" stroke="#E07B39" stroke-width="8"/>
+    <path d="M110 420 v20 M100 430 h20" fill="none" stroke="#E07B39" stroke-width="6"/>
+  </g>
+</svg>

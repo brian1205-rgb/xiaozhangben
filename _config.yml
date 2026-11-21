@@ -1,0 +1,5 @@
+# GitHub Pages (Jekyll) settings.
+# Folders starting with "_" (like _dev) and dot-folders (like .claude) are never published.
+# These files are for development only and are also kept off the website:
+exclude:
+  - CLAUDE.md

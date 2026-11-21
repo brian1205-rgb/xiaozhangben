@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- 風格 2：扁平極簡 — 陶土橘底、白色錢包、金幣 -->
+  <rect width="512" height="512" fill="#E9784B"/>
+  <g transform="translate(0 8)">
+    <circle cx="306" cy="168" r="54" fill="#F7C04A"/>
+    <circle cx="306" cy="168" r="35" fill="none" stroke="#E5A132" stroke-width="9"/>
+    <rect x="124" y="190" width="264" height="184" rx="38" fill="#FFF4E6"/>
+    <rect x="124" y="190" width="264" height="44" rx="22" fill="#FBE3CF"/>
+    <rect x="124" y="212" width="264" height="22" fill="#FBE3CF"/>
+    <rect x="300" y="252" width="88" height="72" rx="22" fill="#F7CDB0"/>
+    <circle cx="336" cy="288" r="13" fill="#E9784B"/>
+  </g>
+</svg>

@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- 風格 3：可愛插畫 — 蜜桃底、珊瑚粉小豬撲滿、金幣 -->
+  <rect width="512" height="512" fill="#FFE4D2"/>
+  <g fill="#FFD3BC">
+    <circle cx="70" cy="90" r="10"/><circle cx="450" cy="120" r="14"/><circle cx="430" cy="440" r="9"/><circle cx="80" cy="420" r="13"/>
+  </g>
+  <g transform="translate(0 6)">
+    <!-- 耳朵 -->
+    <path d="M176 200 L162 132 L230 170 Z" fill="#F08A84" stroke="#F08A84" stroke-width="16" stroke-linejoin="round"/>
+    <path d="M336 200 L350 132 L282 170 Z" fill="#F08A84" stroke="#F08A84" stroke-width="16" stroke-linejoin="round"/>
+    <!-- 腳 -->
+    <rect x="176" y="356" width="44" height="52" rx="16" fill="#F08A84"/>
+    <rect x="292" y="356" width="44" height="52" rx="16" fill="#F08A84"/>
+    <!-- 尾巴 -->
+    <path d="M402 268 C428 252 434 284 414 286 C398 288 404 262 426 262" fill="none" stroke="#F08A84" stroke-width="10" stroke-linecap="round"/>
+    <!-- 身體 -->
+    <ellipse cx="256" cy="282" rx="152" ry="122" fill="#F9A9A0"/>
+    <!-- 投幣孔 + 金幣 -->
+    <rect x="222" y="174" width="68" height="14" rx="7" fill="#C9615C"/>
+    <circle cx="256" cy="132" r="36" fill="#F7C04A" stroke="#E3A02D" stroke-width="7"/>
+    <path d="M256 114 V150" stroke="#E3A02D" stroke-width="7" stroke-linecap="round"/>
+    <!-- 眼睛 -->
+    <circle cx="204" cy="262" r="12" fill="#5B3B2B"/><circle cx="208" cy="258" r="4" fill="#fff"/>
+    <circle cx="308" cy="262" r="12" fill="#5B3B2B"/><circle cx="312" cy="258" r="4" fill="#fff"/>
+    <!-- 腮紅 -->
+    <ellipse cx="178" cy="300" rx="22" ry="12" fill="#F2706F" opacity=".45"/>
+    <ellipse cx="334" cy="300" rx="22" ry="12" fill="#F2706F" opacity=".45"/>
+    <!-- 鼻子 -->
+    <ellipse cx="256" cy="306" rx="44" ry="30" fill="#F28C88"/>
+    <ellipse cx="242" cy="306" rx="6" ry="10" fill="#C9615C"/>
+    <ellipse cx="270" cy="306" rx="6" ry="10" fill="#C9615C"/>
+    <!-- 嘴巴 -->
+    <path d="M244 352 Q256 362 268 352" fill="none" stroke="#5B3B2B" stroke-width="6" stroke-linecap="round"/>
+  </g>
+</svg>

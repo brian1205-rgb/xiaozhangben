@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- 風格 5：印章書法 — 宣紙底、朱紅印章、楷書「帳」字 -->
+  <defs>
+    <filter id="stamp" x="-10%" y="-10%" width="120%" height="120%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.7" numOctaves="2" seed="9" result="noise"/>
+      <feColorMatrix in="noise" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  -4 0 0 0 3.4" result="mask"/>
+      <feComposite in="SourceGraphic" in2="mask" operator="in" result="tex"/>
+      <feTurbulence type="fractalNoise" baseFrequency="0.04" numOctaves="2" seed="2" result="w"/>
+      <feDisplacementMap in="tex" in2="w" scale="6" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <filter id="grain" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="2" seed="6"/>
+      <feColorMatrix values="0 0 0 0 0.45  0 0 0 0 0.35  0 0 0 0 0.2  0 0 0 0.07 0"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" fill="#F6EEDF"/>
+  <rect width="512" height="512" filter="url(#grain)"/>
+  <g transform="rotate(-4 256 256)" filter="url(#stamp)">
+    <rect x="128" y="128" width="256" height="256" rx="30" fill="#C8452F"/>
+    <rect x="146" y="146" width="220" height="220" rx="20" fill="none" stroke="#F6EEDF" stroke-width="7"/>
+    <text x="256" y="262" text-anchor="middle" dominant-baseline="central"
+          font-family="DFKai-SB, 標楷體, KaiTi, serif" font-size="176" font-weight="bold" fill="#F6EEDF">帳</text>
+  </g>
+</svg>
