@@ -21,7 +21,7 @@ html, body { margin: 0; }
 body {
   background: var(--bg);
   color: var(--text);
-  font: 18px/1.45 system-ui, -apple-system, "PingFang TC", "Microsoft JhengHei", "Noto Sans TC", sans-serif;
+  font: 18px/1.45 system-ui, -apple-system, "PingFang TC", "Microsoft JhengHei", "Noto Sans TC", "Noto Color Emoji", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 body.locked { overflow: hidden; }
@@ -386,4 +386,9 @@ button.row:active { background: var(--chip); }
   .modal { align-items: center; }
   .modal-card { border-radius: 20px; max-width: 480px; max-height: 86vh; padding-bottom: 16px; }
   .toast { left: 240px; bottom: 40px; }
+}
+
+/* 只放表情符號的地方：優先用 Noto 表情符號字型，電腦和手機長得一樣 */
+.tx-icon, .cat-icon, .crow .ci, .emoji-grid button, .empty .big, .ledger-pill .lp-icon {
+  font-family: "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
 }

@@ -5,7 +5,7 @@
 
 - 網站：https://brian1205-rgb.github.io/xiaozhangben/
 - 存放區：https://github.com/brian1205-rgb/xiaozhangben（Public，`main` 分支根目錄就是網站）
-- 目前版本：**2.1.0**（`app.js` 的 `APP_VERSION`）
+- 目前版本：**2.1.1**（`app.js` 的 `APP_VERSION`）
 
 ## 多台電腦開發（重要）
 使用者會在不同電腦開發，GitHub 是唯一的正本：
@@ -22,6 +22,7 @@
 - 程式都由 Claude 寫。流程：使用者提需求 → Claude 修改 → **在瀏覽器用手機尺寸（375×812）實測** → 測試沒問題後 **Claude 直接 commit 並 push 到 GitHub**（使用者已同意）→ 確認網站已更新 → 請使用者把手機 App 關掉重開。
 - 只在使用者要求修改、且測試通過後才 push；commit 訊息用中文描述改了什麼。
 - 介面偏好：淺色模式、內文 18px、首頁不要上方標題列、底部選單目前分頁要明顯。
+- 圖示用表情符號：index.html 載入 Google Fonts 的 Noto Color Emoji，讓 Windows 和 Android 長得一樣（style.css 最後有指定圖示元素用這個字型）。
 - 電腦版（2.1.0 起）：同一個網址，螢幕寬 960px 以上自動換排版（style.css 最後的 @media 區塊）。改畫面時手機（375×812）和電腦（1280×800）兩種尺寸都要測。
 
 ## 檔案結構
@@ -30,7 +31,7 @@
 index.html            頁面骨架、底部選單
 app.js                全部程式（ES module，無框架、無打包；從 gstatic CDN 載入 Firebase 10.14.1）
 style.css             樣式（固定淺色）
-sw.js                 Service Worker：network-first 離線快取，抓檔用 cache:no-cache（GitHub Pages 有 max-age=600，不這樣手機會用 10 分鐘內的舊檔）。改了檔案要把 CACHE 版本 +1（目前 xiaozhangben-v14）；gstatic 的 Firebase 檔案用 cache-first
+sw.js                 Service Worker：network-first 離線快取，抓檔用 cache:no-cache（GitHub Pages 有 max-age=600，不這樣手機會用 10 分鐘內的舊檔）。改了檔案要把 CACHE 版本 +1（目前 xiaozhangben-v15）；gstatic 的 Firebase 檔案和 Google 字型用 cache-first
 manifest.webmanifest  PWA 設定
 icon-192.png / icon-512.png / apple-touch-icon.png   App 圖示（手繪暖色風）
 _config.yml           GitHub Pages 設定：排除 CLAUDE.md；_ 開頭資料夾本來就不會發佈
