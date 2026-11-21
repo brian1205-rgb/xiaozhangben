@@ -1,4 +1,4 @@
-/* ============================================================
+﻿/* ============================================================
    小帳本 — 記帳 App（PWA）
    2.0.0 起資料存在雲端（Firebase Firestore），用 Google 帳號登入。
    每個人有自己的「個人帳本」，也可以建立和家人共用的「家用帳本」。
@@ -12,7 +12,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 const STORE_KEY = 'xiaozhangben:v1'; // 舊版（1.x）存在手機裡的資料
-const APP_VERSION = '2.0.1';
+const APP_VERSION = '2.0.2';
 // 1.2.0 起支出分類分成「主分類 + 次分類」，資料格式 version 2（舊資料自動轉換）。
 // 1.1.0 起只記支出。舊版的收入／轉帳記錄仍保留在資料與備份檔中，只是不顯示。
 
@@ -174,7 +174,7 @@ const ledgerLabel = (l) => (l.type === 'personal' ? '👤 個人' : `🏠 ${l.na
 // 目前顯示的帳本資料（格式跟舊版相同，畫面程式不用改）
 let data = { ...defaultData(), accounts: [], categories: { expense: [], income: [] } };
 // 上次跟雲端同步時的樣子：save() 比對出有改的地方才上傳
-const synced = { meta: '', txs: new Map() };
+let synced = { meta: '', txs: new Map() };
 const metaJSON = (d) => JSON.stringify({ accounts: d.accounts, categories: d.categories });
 const clean = (o) => JSON.parse(JSON.stringify(o)); // 拿掉 undefined（Firestore 不接受）
 const ledgerRef = (id) => doc(db, 'ledgers', id);
@@ -195,6 +195,8 @@ async function commitOps(ops) {
 function save() {
   const lid = cloud.activeId;
   if (cloud.status !== 'ready' || !lid || !cloud.gotMeta || !cloud.gotTxs) return;
+  const book = books.get(lid);
+  if (book) book.data = data; // 匯入、清除時 data 會整個換掉，要接回這本帳本
   lsSet('xiaozhangben:prefs:' + lid, JSON.stringify(data.prefs || {}));
   const ops = [];
   const mj = metaJSON(data);
@@ -218,61 +220,96 @@ function save() {
   });
 }
 
+// 每一本帳本都在背景持續同步（books），切換帳本時直接換畫面，不用重新載入
+const books = new Map(); // 帳本id → { id, meta, data, synced, gotMeta, gotTxs, pending, unsub[] }
+
 function stopListening() {
   cloud.unsub.forEach((f) => { try { f(); } catch {} });
   cloud.unsub = [];
+  for (const b of books.values()) closeBook(b);
+  books.clear();
+}
+function closeBook(b) {
+  b.unsub.forEach((f) => { try { f(); } catch {} });
+  b.unsub = [];
 }
 
-// 切換到某一本帳本並開始即時同步
-function openLedger(id) {
-  for (const f of cloud.unsub.splice(1)) { try { f(); } catch {} } // 保留第 0 個（帳本清單）
-  cloud.activeId = id;
-  cloud.meta = null; cloud.gotMeta = false; cloud.gotTxs = false;
-  synced.meta = ''; synced.txs = new Map();
+// 讓畫面改用某本帳本的資料
+function activate(b) {
+  data = b.data; synced = b.synced;
+  cloud.meta = b.meta; cloud.gotMeta = b.gotMeta; cloud.gotTxs = b.gotTxs; cloud.pending = b.pending;
+}
+
+// 取得（沒有就建立並開始同步）某本帳本
+function bookFor(id) {
+  if (books.has(id)) return books.get(id);
   let prefs = {};
   try { prefs = JSON.parse(lsGet('xiaozhangben:prefs:' + id) || '{}') || {}; } catch {}
-  data = { version: 2, accounts: [], categories: { expense: [], income: [] }, txs: [], prefs };
-  ui.reportAccs.clear(); ui.reportSel = null;
-  lsSet('xiaozhangben:active:' + cloud.user.uid, id);
-  render();
-
+  const b = {
+    id, meta: null, gotMeta: false, gotTxs: false, pending: false, unsub: [],
+    data: { version: 2, accounts: [], categories: { expense: [], income: [] }, txs: [], prefs },
+    synced: { meta: '', txs: new Map() },
+  };
+  books.set(id, b);
+  const isActive = () => cloud.activeId === id && books.get(id) === b;
+  const changed = () => { if (isActive()) { activate(b); render(); } };
   const onErr = (e) => {
     console.error(e);
-    if (e.code === 'permission-denied' && id !== 'p_' + cloud.user.uid) {
+    if (e.code !== 'permission-denied') return;
+    closeBook(b);
+    books.delete(id);
+    if (isActive() || cloud.activeId === id) {
       toast('你已經不在這本帳本的成員裡');
       openLedger('p_' + cloud.user.uid);
     }
   };
-  cloud.unsub.push(onSnapshot(ledgerRef(id), (snap) => {
+  b.unsub.push(onSnapshot(ledgerRef(id), (snap) => {
     if (!snap.exists()) return;
     const m = snap.data();
-    cloud.meta = { id, ...m };
+    b.meta = { id, ...m };
     const d = normalize({ accounts: m.accounts || [], categories: { expense: m.categories?.expense || [], income: m.categories?.income || [] }, txs: [] });
     const mj = metaJSON(d);
     // 只有別人（或另一支手機）改過才換掉，避免打斷正在編輯的畫面
-    if (mj !== synced.meta) { data.accounts = d.accounts; data.categories = d.categories; synced.meta = mj; }
-    cloud.gotMeta = true;
+    if (mj !== b.synced.meta) { b.data.accounts = d.accounts; b.data.categories = d.categories; b.synced.meta = mj; }
+    b.gotMeta = true;
     // 家用帳本：把自己的名字記在成員名單上，讓大家看得到是誰記的
     if (m.type === 'family' && m.members?.[cloud.user.uid]?.name !== myName()) {
       updateDoc(ledgerRef(id), { [`members.${cloud.user.uid}`]: { name: myName(), email: cloud.email } }).catch(() => {});
     }
-    render();
+    changed();
   }, onErr));
-  cloud.unsub.push(onSnapshot(collection(db, 'ledgers', id, 'txs'), { includeMetadataChanges: true }, (snap) => {
-    cloud.pending = snap.metadata.hasPendingWrites;
-    if (snap.docChanges().length || !cloud.gotTxs) {
+  b.unsub.push(onSnapshot(collection(db, 'ledgers', id, 'txs'), { includeMetadataChanges: true }, (snap) => {
+    const wasPending = b.pending;
+    b.pending = snap.metadata.hasPendingWrites;
+    const hasChanges = snap.docChanges().length > 0 || !b.gotTxs;
+    if (hasChanges) {
       const txs = [];
       for (const ds of snap.docs) {
         const t = ds.data();
         if (t && t.id) txs.push(t);
       }
-      data.txs = normalize({ accounts: [], categories: { expense: [], income: [] }, txs }).txs;
+      b.data.txs = normalize({ accounts: [], categories: { expense: [], income: [] }, txs }).txs;
       // 用正規化後的內容當作比對基準
-      synced.txs = new Map(data.txs.map((t) => [t.id, JSON.stringify(t)]));
-      cloud.gotTxs = true;
+      b.synced.txs = new Map(b.data.txs.map((t) => [t.id, JSON.stringify(t)]));
+      b.gotTxs = true;
     }
-    render();
+    if (hasChanges || wasPending !== b.pending) changed();
   }, onErr));
+  return b;
+}
+
+// 切換到某一本帳本（已經在背景同步的話，畫面立刻換好）
+function openLedger(id) {
+  const switching = cloud.activeId && cloud.activeId !== id;
+  cloud.activeId = id;
+  activate(bookFor(id));
+  ui.reportAccs.clear(); ui.reportSel = null;
+  lsSet('xiaozhangben:active:' + cloud.user.uid, id);
+  render();
+  if (switching) {
+    const v = $('#view');
+    v.classList.remove('swap'); void v.offsetWidth; v.classList.add('swap'); // 輕輕淡入，讓人知道換了帳本
+  }
 }
 
 // 第一次登入：建立個人帳本，並把手機裡的舊資料搬上去
@@ -345,6 +382,13 @@ async function startSession(user) {
   cloud.unsub.push(onSnapshot(query(collection(db, 'ledgers'), where('memberEmails', 'array-contains', cloud.email)), (snap) => {
     const order = (l) => (l.type === 'personal' ? 0 : 1);
     cloud.ledgers = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => order(a) - order(b) || (a.createdAt || 0) - (b.createdAt || 0));
+    // 每本帳本都先在背景同步好，切換時就不用等
+    for (const l of cloud.ledgers) bookFor(l.id);
+    if (!snap.metadata.fromCache) {
+      for (const [id, b] of books) {
+        if (id !== cloud.activeId && !cloud.ledgers.some((l) => l.id === id)) { closeBook(b); books.delete(id); }
+      }
+    }
     if (cloud.activeId && !cloud.ledgers.some((l) => l.id === cloud.activeId) && !snap.metadata.fromCache) openLedger('p_' + cloud.user.uid);
     else render();
   }, (e) => console.error(e)));

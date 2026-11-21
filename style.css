@@ -70,6 +70,9 @@ body.no-tabs .tabbar { display: none; }
 .btn-primary:active { background: var(--chip); }
 .spinner { width: 36px; height: 36px; margin: 0 auto 12px; border-radius: 50%; border: 3px solid var(--brand-soft); border-top-color: var(--brand); animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+/* 切換帳本時輕輕淡入 */
+#view.swap { animation: swapIn .22s ease-out; }
+@keyframes swapIn { from { opacity: .35; } to { opacity: 1; } }
 .cal-btn.on { background: #c8eadd; color: var(--brand); }
 
 /* 首頁日曆 */

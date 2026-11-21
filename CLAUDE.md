@@ -5,7 +5,7 @@
 
 - 網站：https://brian1205-rgb.github.io/xiaozhangben/
 - 存放區：https://github.com/brian1205-rgb/xiaozhangben（Public，`main` 分支根目錄就是網站）
-- 目前版本：**2.0.1**（`app.js` 的 `APP_VERSION`）
+- 目前版本：**2.0.2**（`app.js` 的 `APP_VERSION`）
 
 ## 多台電腦開發（重要）
 使用者會在不同電腦開發，GitHub 是唯一的正本：
@@ -29,7 +29,7 @@
 index.html            頁面骨架、底部選單
 app.js                全部程式（ES module，無框架、無打包；從 gstatic CDN 載入 Firebase 10.14.1）
 style.css             樣式（固定淺色）
-sw.js                 Service Worker：network-first 離線快取，抓檔用 cache:no-cache（GitHub Pages 有 max-age=600，不這樣手機會用 10 分鐘內的舊檔）。改了檔案要把 CACHE 版本 +1（目前 xiaozhangben-v11）；gstatic 的 Firebase 檔案用 cache-first
+sw.js                 Service Worker：network-first 離線快取，抓檔用 cache:no-cache（GitHub Pages 有 max-age=600，不這樣手機會用 10 分鐘內的舊檔）。改了檔案要把 CACHE 版本 +1（目前 xiaozhangben-v12）；gstatic 的 Firebase 檔案用 cache-first
 manifest.webmanifest  PWA 設定
 icon-192.png / icon-512.png / apple-touch-icon.png   App 圖示（手繪暖色風）
 _config.yml           GitHub Pages 設定：排除 CLAUDE.md；_ 開頭資料夾本來就不會發佈
@@ -51,7 +51,7 @@ _dev/tools/           開發工具（不會出現在網站上）
   - `ledgers/{id}`：`{type:'personal'|'family', name, owner(uid), ownerEmail, memberEmails[](小寫), members{uid:{name,email}}, accounts[], categories{expense,income}, createdAt, updatedAt}`。個人帳本 id 固定 `p_<uid>`，家用帳本 `f_<亂數>`。
   - `ledgers/{id}/txs/{txId}`：每筆記錄（欄位同下方舊格式，另有 `by`(uid)／`byName` 記錄是誰記的）。
 - 規則重點：只有 `memberEmails` 裡的人能讀寫；只有建立者能改成員、刪帳本；個人帳本成員固定只有本人。**規則不允許讀取不存在的文件**（getDoc 會得到 permission-denied，程式把它當成「還沒建立」）。
-- 程式：`save()` 會把目前 `data` 跟上次同步的內容比對，只寫有變的部分（離線先存手機快取）；`onSnapshot` 即時收別人的修改。畫面程式仍操作 `data`（格式同舊版）。
+- 程式：`save()` 會把目前 `data` 跟上次同步的內容比對，只寫有變的部分（離線先存手機快取）；`onSnapshot` 即時收別人的修改。所有帳本都在背景同步（`books`），切換帳本只是換畫面，不重新載入。畫面程式仍操作 `data`（格式同舊版）。
 - 舊資料搬家：登入時如果手機 localStorage 有舊資料、且這支手機還沒搬過（`xiaozhangben:migrated:<uid>`），就上傳到個人帳本；雲端個人帳本沒有記錄時直接用手機的分類／付款方式，有記錄時合併。手機裡的舊資料不刪。
 - 測試：本機預覽登入要**使用者本人**在瀏覽器按 Google 登入（Claude 不能代登入）。測試會寫到使用者真正的雲端資料，測完要清掉（家用帳本可用「刪除這本家用帳本」，個人帳本用「清除個人帳本的所有資料」）。
 ## 舊版資料格式（1.x 存在手機 localStorage，2.0 的帳本內容沿用同樣格式）
