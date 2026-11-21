@@ -133,6 +133,11 @@ main { padding: calc(env(safe-area-inset-top) + 10px) 16px 16px; }
 .tf-box select { flex: 1; border: 0; background: transparent; font-size: 20.4px; font-weight: 600; outline: none; }
 .tf-arrow { text-align: center; color: var(--muted); font-size: 21.6px; }
 
+.sub-row { display: flex; align-items: center; gap: 8px; overflow-x: auto; padding: 8px 12px 4px; min-height: 52px; scrollbar-width: none; border-top: 1px solid var(--line); }
+.sub-row::-webkit-scrollbar { display: none; }
+.sub-label { flex: none; font-size: 15.6px; color: var(--text2); font-weight: 600; }
+.chip { flex: none; padding: 7px 14px; border-radius: 999px; background: var(--card); box-shadow: 0 0 0 1px var(--line); font-size: 16.8px; color: var(--text); white-space: nowrap; }
+.chip.on { background: var(--brand); color: #fff; font-weight: 600; box-shadow: none; }
 .entry-fields { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 12px; }
 .field { display: flex; align-items: center; gap: 6px; background: var(--card); border-radius: 10px; padding: 4px 10px; font-size: 15.6px; color: var(--text2); flex: 1 1 40%; min-width: 0; }
 .field > span { flex: none; }
@@ -201,6 +206,10 @@ button.row:active { background: var(--chip); }
 .crow .cv { font-weight: 600; font-variant-numeric: tabular-nums; }
 .crow .cbar { grid-column: 2 / 5; height: 6px; border-radius: 3px; background: var(--chip); overflow: hidden; }
 .crow .cbar i { display: block; height: 100%; border-radius: 3px; }
+.srows { background: var(--bg); border-top: 1px solid var(--line); }
+.srow { display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: center; padding: 9px 16px 9px 66px; font-size: 16.8px; color: var(--text2); font-variant-numeric: tabular-nums; }
+.srow + .srow { border-top: 1px dashed var(--line); }
+.srow .sv { color: var(--text); font-weight: 600; }
 .stat-line { display: flex; justify-content: space-between; font-size: 15.6px; color: var(--text2); padding: 0 4px 10px; }
 
 .net { text-align: center; padding: 20px; }

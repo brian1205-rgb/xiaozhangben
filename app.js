@@ -6,7 +6,8 @@
    ============================================================ */
 
 const STORE_KEY = 'xiaozhangben:v1';
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
+// 1.2.0 起支出分類分成「主分類 + 次分類」，資料格式 version 2（舊資料自動轉換）。
 // 1.1.0 起只記支出。舊版的收入／轉帳記錄仍保留在資料與備份檔中，只是不顯示。
 
 // ---------- 小工具 ----------
@@ -25,22 +26,32 @@ const TYPE_LABEL = { expense: '支出', income: '收入', transfer: '轉帳' };
 
 const EMOJIS = ['🍳','🍱','🍜','🍔','☕','🧋','🍰','🍺','🛒','🧻','🚌','🚇','🚕','⛽','🅿️','🚗','🛵','✈️','🛍️','👕','💄','🎮','🎬','🎤','🏨','💊','🏥','🏠','🛋️','📱','💡','💧','🔥','📚','🎓','🎁','❤️','🐶','👶','💇','🏋️','💻','🔧','📦','💰','🎉','📈','💼','🏦','🪙','💵','💳','👛','🐷','🧾','❔'];
 
+// 預設的支出分類：[主分類, 圖示, [次分類…]]
+const DEFAULT_TREE = [
+  ['飲食', '🍱', ['早餐', '午餐', '晚餐', '飲料', '點心', '宵夜']],
+  ['交通', '🚌', ['捷運公車', '計程車', '加油', '停車', '高鐵火車']],
+  ['購物', '🛍️', ['衣服', '鞋包', '3C', '網購']],
+  ['日用品', '🧻', ['清潔用品', '衛浴用品', '廚房用品']],
+  ['居家', '🏠', ['房租', '家具', '修繕']],
+  ['帳單', '💡', ['水電瓦斯', '電話網路', '訂閱']],
+  ['娛樂', '🎮', ['電影', '遊戲', '旅遊', 'KTV']],
+  ['醫療', '💊', ['看診', '藥品', '保健食品']],
+  ['教育', '📚', ['書籍', '課程']],
+  ['人情', '🎁', ['紅包', '禮物', '請客']],
+  ['其他', '📦', []],
+];
+
 function defaultData() {
   const c = (name, icon) => ({ id: uid(), name, icon });
   return {
-    version: 1,
+    version: 2,
     accounts: [
       { id: uid(), name: '現金', icon: '💵', initial: 0 },
       { id: uid(), name: '銀行', icon: '🏦', initial: 0 },
       { id: uid(), name: '信用卡', icon: '💳', initial: 0 },
     ],
     categories: {
-      expense: [
-        c('早餐', '🍳'), c('午餐', '🍱'), c('晚餐', '🍜'), c('飲料', '🧋'), c('點心', '🍰'),
-        c('交通', '🚌'), c('購物', '🛍️'), c('日用品', '🧻'), c('娛樂', '🎮'), c('醫療', '💊'),
-        c('居家', '🏠'), c('電話網路', '📱'), c('水電瓦斯', '💡'), c('教育', '📚'), c('人情', '🎁'),
-        c('其他', '📦'),
-      ],
+      expense: DEFAULT_TREE.map(([name, icon, subs]) => ({ id: uid(), name, icon, subs: subs.map((s) => ({ id: uid(), name: s })) })),
       income: [
         c('薪水', '💰'), c('獎金', '🎉'), c('投資', '📈'), c('兼職', '💼'), c('利息', '🏦'), c('其他', '📦'),
       ],
@@ -55,17 +66,50 @@ function validData(d) {
     Array.isArray(d.categories.expense) && Array.isArray(d.categories.income);
 }
 
+// 舊版（單層分類）→ 新版（主分類 + 次分類）。
+// 依名稱對應預設分類：例如舊的「早餐」變成「飲食 › 早餐」，原本的記錄跟著搬過去；
+// 自己新增、對不上的分類保留為主分類。所有 id 都沿用，不會遺失任何記錄。
+function migrateFlat(d) {
+  const old = d.categories.expense.map((c) => ({ id: String(c.id), name: String(c.name ?? ''), icon: c.icon || '❔' }));
+  const used = new Set();
+  const take = (name) => { const c = old.find((o) => o.name === name && !used.has(o.id)); if (c) used.add(c.id); return c; };
+  const moved = new Map(); // 舊分類 id → { main, sub }
+  const tree = DEFAULT_TREE.map(([name, icon, subNames]) => {
+    const asMain = take(name);
+    const main = { id: asMain?.id ?? uid(), name, icon: asMain?.icon ?? icon, subs: [] };
+    for (const s of subNames) {
+      const asSub = take(s);
+      const sub = { id: asSub?.id ?? uid(), name: s };
+      main.subs.push(sub);
+      if (asSub) moved.set(asSub.id, { main: main.id, sub: sub.id });
+    }
+    return main;
+  });
+  for (const o of old) if (!used.has(o.id)) tree.push({ ...o, subs: [] });
+  d.categories.expense = tree;
+  for (const t of d.txs) {
+    const m = t && t.type === 'expense' && moved.get(String(t.categoryId));
+    if (m) { t.categoryId = m.main; t.subCategoryId = m.sub; }
+  }
+  return d;
+}
+
+let migratedOnLoad = false;
 function normalize(d) {
+  if (!d.categories.expense.every((c) => Array.isArray(c.subs))) { migrateFlat(d); migratedOnLoad = true; }
   return {
-    version: 1,
+    version: 2,
     accounts: d.accounts.map((a) => ({ id: String(a.id), name: String(a.name ?? ''), icon: a.icon || '👛', initial: Number(a.initial) || 0 })),
     categories: {
-      expense: d.categories.expense.map((c) => ({ id: String(c.id), name: String(c.name ?? ''), icon: c.icon || '❔' })),
+      expense: d.categories.expense.map((c) => ({
+        id: String(c.id), name: String(c.name ?? ''), icon: c.icon || '❔',
+        subs: c.subs.map((s) => ({ id: String(s.id), name: String(s.name ?? '') })),
+      })),
       income: d.categories.income.map((c) => ({ id: String(c.id), name: String(c.name ?? ''), icon: c.icon || '❔' })),
     },
     txs: d.txs
       .filter((t) => t && ['expense', 'income', 'transfer'].includes(t.type) && /^\d{4}-\d{2}-\d{2}$/.test(t.date))
-      .map((t) => ({ ...t, amount: Number(t.amount) || 0, note: String(t.note ?? '') })),
+      .map((t) => ({ ...t, amount: Number(t.amount) || 0, note: String(t.note ?? ''), subCategoryId: t.subCategoryId ? String(t.subCategoryId) : null })),
     prefs: d.prefs && typeof d.prefs === 'object' ? d.prefs : {},
   };
 }
@@ -95,6 +139,7 @@ function save() {
 }
 
 let data = load();
+if (migratedOnLoad) { save(); migratedOnLoad = false; } // 舊資料轉換完立刻存起來
 
 // ---------- 畫面狀態 ----------
 const currentYM = () => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() + 1 }; };
@@ -110,6 +155,7 @@ function shiftMonth(delta) {
 }
 
 const findCat = (type, id) => (data.categories[type] || []).find((c) => c.id === id);
+const findSub = (cat, subId) => (subId && cat?.subs ? cat.subs.find((s) => s.id === subId) : undefined);
 const findAcc = (id) => data.accounts.find((a) => a.id === id);
 const accName = (id) => findAcc(id)?.name ?? '（已刪除帳戶）';
 // 只取「支出」記錄
@@ -146,13 +192,15 @@ function summaryCard(txs) {
   </div>`;
 }
 
+// 標題顯示次分類（沒有就顯示主分類），第二行顯示「主分類 · 付款方式 · 備註」
 function txRow(t) {
   const c = findCat('expense', t.categoryId);
-  let sub = accName(t.accountId);
-  if (t.note) sub += ' · ' + t.note;
+  const s = findSub(c, t.subCategoryId);
+  const title = s ? s.name : (c?.name ?? '未分類');
+  const sub = [s ? c.name : null, accName(t.accountId), t.note || null].filter(Boolean).join(' · ');
   return `<button class="tx" data-action="edit-tx" data-id="${esc(t.id)}">
     <span class="tx-icon">${esc(c?.icon ?? '❔')}</span>
-    <span class="tx-main"><span class="tx-name">${esc(c?.name ?? '未分類')}</span><span class="tx-sub">${esc(sub)}</span></span>
+    <span class="tx-main"><span class="tx-name">${esc(title)}</span><span class="tx-sub">${esc(sub)}</span></span>
     <span class="tx-amt">${fmt(t.amount)}</span>
   </button>`;
 }
@@ -239,30 +287,51 @@ function viewReport() {
   if (rows.length > TOP) {
     slices.push({ id: '__other', name: '其他（合併）', icon: '', value: round2(rows.slice(TOP).reduce((s, r) => s + r.value, 0)), color: 'var(--s-other)' });
   }
-  const sel = slices.find((s) => s.id === ui.reportSel);
+  // 選取的可能是圓餅的一塊，也可能是清單中排在第 6 名以後的主分類
+  const selId = ui.reportSel;
+  const rest = new Set(rows.slice(TOP).map((r) => r.id));
+  const sel = slices.find((s) => s.id === selId) || rows.find((r) => r.id === selId);
+  const sliceSel = selId && rest.has(selId) ? '__other' : selId;
   const center = sel
     ? `<div class="dc-lbl">${esc(sel.name)}</div><div class="dc-val">$${fmt(sel.value)}</div><div class="dc-sub">${pct(sel.value, total)}</div>`
     : `<div class="dc-lbl">總${TYPE_LABEL[type]}</div><div class="dc-val">$${fmt(total)}</div><div class="dc-sub">${rows.length} 個分類</div>`;
 
   html += `<div class="card">
-    <div class="donut-box">${donutSvg(slices, total, ui.reportSel)}<div class="donut-center">${center}</div></div>
+    <div class="donut-box">${donutSvg(slices, total, sliceSel)}<div class="donut-center">${center}</div></div>
     <div class="rows" style="box-shadow:none;margin:0 -16px -16px;border-radius:0 0 16px 16px">
       ${rows.map((r, i) => {
-        const sid = i < TOP ? r.id : '__other';
-        const dim = ui.reportSel && ui.reportSel !== sid ? ' dim' : '';
+        const on = selId === r.id || (selId === '__other' && i >= TOP);
+        const dim = selId && !on ? ' dim' : '';
         const color = colorOf(i);
         const w = Math.max(1, (r.value / rows[0].value) * 100);
-        return `<button class="crow${dim}" data-action="report-sel" data-id="${esc(sid)}">
+        return `<button class="crow${dim}" data-action="report-sel" data-id="${esc(r.id)}">
           <span class="dot" style="background:${color}"></span>
           <span class="ci">${esc(r.icon)}</span>
           <span class="cn">${esc(r.name)}<small>${pct(r.value, total)}</small></span>
           <span class="cv">$${fmt(r.value)}</span>
           <span class="cbar"><i style="width:${w}%;background:${color}"></i></span>
-        </button>`;
+        </button>${selId === r.id ? subBreakdown(txs, r) : ''}`;
       }).join('')}
     </div>
-  </div>`;
+  </div>
+  <p class="hint">點主分類可以看它底下各個次分類花了多少。</p>`;
   return html;
+}
+
+// 某個主分類底下的次分類明細
+function subBreakdown(txs, row) {
+  const c = findCat('expense', row.id);
+  const sums = new Map();
+  for (const t of txs) {
+    if (t.categoryId !== row.id) continue;
+    const s = findSub(c, t.subCategoryId);
+    const key = s ? s.id : '__none';
+    sums.set(key, (sums.get(key) || 0) + t.amount);
+  }
+  const list = [...sums].map(([id, v]) => ({ name: id === '__none' ? '（未選次分類）' : findSub(c, id).name, value: round2(v) }))
+    .sort((a, b) => b.value - a.value);
+  return `<div class="srows">${list.map((s) =>
+    `<div class="srow"><span class="sn">${esc(s.name)}</span><span class="sp">${pct(s.value, row.value)}</span><span class="sv">$${fmt(s.value)}</span></div>`).join('')}</div>`;
 }
 
 // ---------- 付款方式（每種付款方式本月花了多少） ----------
@@ -287,7 +356,7 @@ function viewPayments() {
 function viewSettings() {
   const persist = ui.persisted === true ? '已鎖定（不會被自動清除）' : ui.persisted === false ? '一般' : '—';
   return `<section class="group"><h2>分類</h2><div class="rows">
-      <button class="row" data-action="manage-cats" data-type="expense"><span>支出分類</span><span class="row-val">${data.categories.expense.length} 個 ›</span></button>
+      <button class="row" data-action="manage-cats" data-type="expense"><span>支出分類</span><span class="row-val">${data.categories.expense.length} 個主分類 ›</span></button>
     </div></section>
     <section class="group"><h2>範例資料</h2><div class="rows">
       ${demoCount()
@@ -323,36 +392,50 @@ function makeDemoTxs() {
   const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
   const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
   const between = (a, b, step = 5) => Math.round((a + rnd() * (b - a)) / step) * step;
-  const cat = (name) => (data.categories.expense.find((c) => c.name === name) || data.categories.expense[0]).id;
   const acc = (i) => (data.accounts[i] || data.accounts[0]).id; // 0 現金、1 銀行、2 信用卡
   const out = [];
-  const add = (date, catName, amount, accIdx, note = '') => out.push({
-    id: uid(), type: 'expense', amount, categoryId: cat(catName), accountId: acc(accIdx),
-    toAccountId: null, date, note, createdAt: Date.now() + out.length, demo: true,
-  });
+  // 依名稱找主分類／次分類；找不到主分類就用第一個，找不到次分類就不填
+  const add = (date, mainName, subName, amount, accIdx, note = '') => {
+    const c = data.categories.expense.find((x) => x.name === mainName) || data.categories.expense[0];
+    const s = c.subs.find((x) => x.name === subName);
+    out.push({
+      id: uid(), type: 'expense', amount, categoryId: c.id, subCategoryId: s ? s.id : null, accountId: acc(accIdx),
+      toAccountId: null, date, note, createdAt: Date.now() + out.length, demo: true,
+    });
+  };
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
   for (let d = new Date(today.getFullYear(), today.getMonth() - 2, 1); d <= today; d.setDate(d.getDate() + 1)) {
     const ds = dateStr(d), day = d.getDate(), weekend = d.getDay() === 0 || d.getDay() === 6;
-    if (rnd() < 0.8) add(ds, '早餐', between(45, 95), 0, pick(['蛋餅豆漿', '三明治奶茶', '飯糰', '吐司加蛋', '']));
-    if (rnd() < 0.85) add(ds, '午餐', between(90, 180), 0, pick(['便當', '自助餐', '牛肉麵', '滷肉飯', '水餃', '']));
+    if (rnd() < 0.8) add(ds, '飲食', '早餐', between(45, 95), 0, pick(['蛋餅豆漿', '三明治奶茶', '飯糰', '吐司加蛋', '']));
+    if (rnd() < 0.85) add(ds, '飲食', '午餐', between(90, 180), 0, pick(['便當', '自助餐', '牛肉麵', '滷肉飯', '水餃', '']));
     if (rnd() < 0.7) {
-      if (weekend) add(ds, '晚餐', between(250, 650, 10), 2, pick(['火鍋', '燒肉', '義大利麵', '聚餐']));
-      else add(ds, '晚餐', between(100, 250), 0, pick(['拉麵', '小吃', '炒飯', '']));
+      if (weekend) add(ds, '飲食', '晚餐', between(250, 650, 10), 2, pick(['火鍋', '燒肉', '義大利麵', '聚餐']));
+      else add(ds, '飲食', '晚餐', between(100, 250), 0, pick(['拉麵', '小吃', '炒飯', '']));
     }
-    if (rnd() < 0.5) add(ds, '飲料', between(35, 75), 0, pick(['珍奶', '美式咖啡', '綠茶', '拿鐵']));
-    if (rnd() < 0.15) add(ds, '點心', between(40, 150), 0, pick(['雞排', '蛋糕', '鹹酥雞', '豆花']));
-    if (day === 1) add(ds, '交通', 500, 0, '悠遊卡加值');
-    if (rnd() < 0.06) add(ds, '交通', between(150, 400, 10), 2, '計程車');
-    if (rnd() < 0.06) add(ds, '購物', between(300, 2500, 10), 2, pick(['衣服', '鞋子', '網購', '3C 配件']));
-    if (rnd() < 0.08) add(ds, '日用品', between(80, 400), 0, pick(['衛生紙', '洗衣精', '牙膏', '洗髮精']));
-    if (weekend && rnd() < 0.3) add(ds, '娛樂', between(250, 800, 10), 2, pick(['電影', 'KTV', '桌遊', '展覽']));
-    if (rnd() < 0.02) add(ds, '醫療', between(150, 500, 10), 0, '看診');
-    if (rnd() < 0.03) add(ds, '居家', between(200, 1500, 10), 2, pick(['收納箱', '檯燈', '床單']));
-    if (rnd() < 0.02) add(ds, '教育', between(300, 600, 10), 2, '買書');
-    if (rnd() < 0.015) add(ds, '人情', pick([600, 1200, 2000]), 0, pick(['紅包', '生日禮物']));
-    if (day === 10) add(ds, '水電瓦斯', between(600, 1800, 10), 1, pick(['電費', '水費', '瓦斯費']));
-    if (day === 15) add(ds, '電話網路', 899, 2, '月租費');
+    if (rnd() < 0.5) add(ds, '飲食', '飲料', between(35, 75), 0, pick(['珍奶', '美式咖啡', '綠茶', '拿鐵']));
+    if (rnd() < 0.15) add(ds, '飲食', '點心', between(40, 150), 0, pick(['雞排', '蛋糕', '鹹酥雞', '豆花']));
+    if (rnd() < 0.05) add(ds, '飲食', '宵夜', between(80, 200), 0, pick(['鹽酥雞', '滷味']));
+    if (day === 1) add(ds, '交通', '捷運公車', 500, 0, '悠遊卡加值');
+    if (rnd() < 0.06) add(ds, '交通', '計程車', between(150, 400, 10), 2);
+    if (day % 9 === 3) add(ds, '交通', '加油', between(800, 1300, 10), 2);
+    if (rnd() < 0.06) {
+      const [s, n] = pick([['衣服', '外套'], ['鞋包', '球鞋'], ['網購', '蝦皮'], ['3C', '充電線']]);
+      add(ds, '購物', s, between(300, 2500, 10), 2, n);
+    }
+    if (rnd() < 0.08) {
+      const [s, n] = pick([['清潔用品', '洗衣精'], ['衛浴用品', '洗髮精'], ['衛浴用品', '衛生紙'], ['廚房用品', '保鮮盒']]);
+      add(ds, '日用品', s, between(80, 400), 0, n);
+    }
+    if (weekend && rnd() < 0.3) add(ds, '娛樂', pick(['電影', 'KTV', '遊戲']), between(250, 800, 10), 2);
+    if (rnd() < 0.02) add(ds, '醫療', '看診', between(150, 500, 10), 0);
+    if (rnd() < 0.02) add(ds, '醫療', '藥品', between(100, 400, 10), 0);
+    if (rnd() < 0.03) add(ds, '居家', '家具', between(200, 1500, 10), 2, pick(['收納箱', '檯燈', '床單']));
+    if (rnd() < 0.02) add(ds, '教育', '書籍', between(300, 600, 10), 2);
+    if (rnd() < 0.015) add(ds, '人情', pick(['紅包', '禮物']), pick([600, 1200, 2000]), 0);
+    if (day === 10) add(ds, '帳單', '水電瓦斯', between(600, 1800, 10), 1, pick(['電費', '水費', '瓦斯費']));
+    if (day === 15) add(ds, '帳單', '電話網路', 899, 2, '月租費');
+    if (day === 20) add(ds, '帳單', '訂閱', 390, 2, '影音串流');
   }
   return out;
 }
@@ -395,6 +478,7 @@ function openEntry(tx) {
     expr: tx ? String(tx.amount) : '0',
     fresh: !!tx, // 編輯時，第一次按數字會取代原金額
     categoryId: tx?.categoryId ?? data.categories.expense[0]?.id ?? null,
+    subCategoryId: tx?.subCategoryId ?? null,
     accountId: tx?.accountId ?? lastAcc ?? null,
     date: tx?.date ?? todayStr(),
     note: tx?.note ?? '',
@@ -423,6 +507,7 @@ function renderEntry() {
     <div class="amount-box"><span class="amount-cur">$</span><span class="amount-text" id="amountText"></span></div>
     <div class="amount-preview" id="amountPreview"></div>
     <div class="entry-body">${body}</div>
+    <div class="sub-row" id="subRow">${subChips()}</div>
     <div class="entry-fields">
       <label class="field field-pay"><select data-bind="accountId" aria-label="付款方式">${accOptions(e.accountId)}</select></label>
       <label class="field field-date"><input type="date" aria-label="日期" data-bind="date" value="${esc(e.date)}" required></label>
@@ -435,6 +520,14 @@ function renderEntry() {
       ${K('clear', 'C', 'k-op')}${K('0', '0')}${K('.', '.')}<button class="k-ok" data-action="key" data-k="ok" id="keyOk">儲存</button>
     </div></div>`;
   updateAmount();
+}
+
+// 次分類小按鈕（可不選；再點一次取消）
+function subChips() {
+  const c = findCat('expense', entry.categoryId);
+  if (!c || !c.subs.length) return `<span class="sub-label">${c ? esc(c.name) + '：沒有次分類' : ''}</span>`;
+  return `<span class="sub-label">${esc(c.name)} ›</span>` + c.subs.map((s) =>
+    `<button class="chip${s.id === entry.subCategoryId ? ' on' : ''}" data-action="pick-sub" data-id="${esc(s.id)}">${esc(s.name)}</button>`).join('');
 }
 
 const hasOp = (s) => /[+-]/.test(s);
@@ -494,7 +587,8 @@ function saveEntry() {
   const amount = evalExpr(e.expr);
   if (!(amount > 0)) return toast('請輸入金額');
   if (!e.accountId || !findAcc(e.accountId)) return toast('請先到「付款」新增付款方式');
-  if (!findCat('expense', e.categoryId)) return toast('請選擇分類');
+  const cat = findCat('expense', e.categoryId);
+  if (!cat) return toast('請選擇分類');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(e.date)) return toast('請選擇日期');
 
   const old = e.id ? data.txs.find((t) => t.id === e.id) : null;
@@ -503,6 +597,7 @@ function saveEntry() {
     type: 'expense',
     amount,
     categoryId: e.categoryId,
+    subCategoryId: findSub(cat, e.subCategoryId) ? e.subCategoryId : null,
     accountId: e.accountId,
     toAccountId: null,
     date: e.date,
@@ -577,33 +672,61 @@ function editAccount(acc) {
 // ---------- 分類管理 ----------
 let catMgr = null;
 
+// catMgr.mainId 為 null 時顯示主分類清單；有值時顯示那個主分類底下的次分類
 function openCatManager(type) {
-  catMgr = { type };
+  catMgr = { type, mainId: null };
   renderCatManager();
   openLayer('sheet');
 }
 
 function renderCatManager() {
-  const type = catMgr.type;
-  const list = data.categories[type];
+  const list = data.categories.expense;
+  const main = catMgr.mainId ? findCat('expense', catMgr.mainId) : null;
+  if (catMgr.mainId && !main) catMgr.mainId = null;
+
+  if (!main) {
+    $('#sheet').innerHTML = `
+      <div class="sheet-top">
+        <button class="text-btn" data-action="close-layer">完成</button>
+        <h3 class="sheet-title">支出分類</h3>
+        <button class="text-btn" data-action="add-cat">新增</button>
+      </div>
+      <div class="entry-body">
+        <div class="rows">${list.map((c, i) => `<div class="row cat-row">
+          <button class="cat-row-main" data-action="open-main" data-id="${esc(c.id)}">
+            <span class="tx-icon">${esc(c.icon)}</span>
+            <span class="tx-main"><span>${esc(c.name)}</span><span class="tx-sub">${c.subs.length ? c.subs.map((s) => esc(s.name)).join('、') : '沒有次分類'}</span></span>
+          </button>
+          ${i > 0 ? `<button class="icon-btn sm" data-action="cat-up" data-id="${esc(c.id)}" aria-label="往上移">↑</button>` : ''}
+        </div>`).join('')}</div>
+        <p class="hint">點主分類可以管理它的次分類、改名稱或圖示；按 ↑ 調整在記帳畫面的順序。右上角「新增」是新增主分類。</p>
+      </div>`;
+    return;
+  }
+
   $('#sheet').innerHTML = `
     <div class="sheet-top">
-      <button class="text-btn" data-action="close-layer">完成</button>
-      <h3 class="sheet-title">${TYPE_LABEL[type]}分類</h3>
-      <button class="text-btn" data-action="add-cat">新增</button>
+      <button class="text-btn" data-action="cat-back">‹ 返回</button>
+      <h3 class="sheet-title">${esc(main.icon)} ${esc(main.name)}</h3>
+      <button class="text-btn" data-action="add-sub">新增</button>
     </div>
     <div class="entry-body">
-      <div class="rows">${list.map((c, i) => `<div class="row cat-row">
-        <button class="cat-row-main" data-action="edit-cat" data-id="${esc(c.id)}"><span class="tx-icon">${esc(c.icon)}</span><span>${esc(c.name)}</span></button>
-        ${i > 0 ? `<button class="icon-btn sm" data-action="cat-up" data-id="${esc(c.id)}" aria-label="往上移">↑</button>` : ''}
-      </div>`).join('')}</div>
-      <p class="hint">點分類可以改名稱、圖示或刪除；按 ↑ 可以調整在記帳畫面的順序。</p>
+      <div class="group"><h2>次分類</h2>
+        ${main.subs.length ? `<div class="rows">${main.subs.map((s, i) => `<div class="row cat-row">
+          <button class="cat-row-main" data-action="edit-sub" data-id="${esc(s.id)}"><span>${esc(s.name)}</span></button>
+          ${i > 0 ? `<button class="icon-btn sm" data-action="sub-up" data-id="${esc(s.id)}" aria-label="往上移">↑</button>` : ''}
+        </div>`).join('')}</div>` : `<p class="hint">還沒有次分類，按右上角「新增」加一個。</p>`}
+      </div>
+      <div class="group"><h2>主分類</h2><div class="rows">
+        <button class="row" data-action="edit-cat" data-id="${esc(main.id)}"><span>修改名稱、圖示或刪除</span><span class="row-val">›</span></button>
+      </div></div>
+      <p class="hint">點次分類可以改名稱或刪除；按 ↑ 調整順序。</p>
     </div>`;
 }
 
 function editCat(type, cat) {
   openForm({
-    title: cat ? '編輯分類' : `新增${TYPE_LABEL[type]}分類`,
+    title: cat ? '編輯主分類' : '新增主分類',
     fields: [
       { key: 'name', label: '名稱', value: cat?.name ?? '', placeholder: '例如：寵物、保險', max: 8 },
       { key: 'icon', label: '圖示', type: 'emoji', value: cat?.icon ?? '📦' },
@@ -611,15 +734,38 @@ function editCat(type, cat) {
     onSave: (v) => {
       if (!v.name) { toast('請輸入名稱'); return false; }
       if (cat) Object.assign(cat, { name: v.name, icon: v.icon });
-      else data.categories[type].push({ id: uid(), name: v.name, icon: v.icon });
+      else data.categories.expense.push({ id: uid(), name: v.name, icon: v.icon, subs: [] });
       save(); renderCatManager(); render(); toast('已儲存');
     },
     onDelete: cat ? () => {
-      if (data.categories[type].length <= 1) { alert('至少要保留一個分類。'); return false; }
-      const n = data.txs.filter((t) => t.type === type && t.categoryId === cat.id).length;
-      const msg = n ? `「${cat.name}」有 ${n} 筆記錄，刪除後這些記錄會顯示為「未分類」。確定刪除嗎？` : `確定刪除分類「${cat.name}」嗎？`;
+      if (data.categories.expense.length <= 1) { alert('至少要保留一個主分類。'); return false; }
+      const n = data.txs.filter((t) => t.type === 'expense' && t.categoryId === cat.id).length;
+      const subs = cat.subs.length ? `（包含 ${cat.subs.length} 個次分類）` : '';
+      const msg = n ? `「${cat.name}」${subs}有 ${n} 筆記錄，刪除後這些記錄會顯示為「未分類」。確定刪除嗎？` : `確定刪除主分類「${cat.name}」${subs}嗎？`;
       if (!confirm(msg)) return false;
-      data.categories[type] = data.categories[type].filter((c) => c.id !== cat.id);
+      data.categories.expense = data.categories.expense.filter((c) => c.id !== cat.id);
+      catMgr.mainId = null;
+      save(); renderCatManager(); render(); toast('已刪除');
+    } : null,
+  });
+}
+
+function editSub(main, sub) {
+  openForm({
+    title: sub ? '編輯次分類' : `新增「${main.name}」的次分類`,
+    fields: [{ key: 'name', label: '名稱', value: sub?.name ?? '', placeholder: '例如：早午餐、捷運', max: 10 }],
+    onSave: (v) => {
+      if (!v.name) { toast('請輸入名稱'); return false; }
+      if (sub) sub.name = v.name;
+      else main.subs.push({ id: uid(), name: v.name });
+      save(); renderCatManager(); render(); toast('已儲存');
+    },
+    onDelete: sub ? () => {
+      const hits = data.txs.filter((t) => t.subCategoryId === sub.id);
+      const msg = hits.length ? `「${sub.name}」有 ${hits.length} 筆記錄，刪除後這些記錄會只顯示主分類「${main.name}」。確定刪除嗎？` : `確定刪除次分類「${sub.name}」嗎？`;
+      if (!confirm(msg)) return false;
+      for (const t of hits) t.subCategoryId = null;
+      main.subs = main.subs.filter((s) => s.id !== sub.id);
       save(); renderCatManager(); render(); toast('已刪除');
     } : null,
   });
@@ -656,11 +802,11 @@ function exportJSON() {
 
 function exportCSV() {
   const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const lines = [['日期', '分類', '金額', '付款方式', '備註'].map(q).join(',')];
+  const lines = [['日期', '主分類', '次分類', '金額', '付款方式', '備註'].map(q).join(',')];
   const sorted = data.txs.filter((t) => t.type === 'expense').sort((a, b) => a.date.localeCompare(b.date));
   for (const t of sorted) {
-    const cat = findCat('expense', t.categoryId)?.name ?? '未分類';
-    lines.push([t.date, cat, t.amount, accName(t.accountId), t.note].map(q).join(','));
+    const c = findCat('expense', t.categoryId);
+    lines.push([t.date, c?.name ?? '未分類', findSub(c, t.subCategoryId)?.name ?? '', t.amount, accName(t.accountId), t.note].map(q).join(','));
   }
   shareOrDownload(`小帳本明細-${stamp()}.csv`, '﻿' + lines.join('\r\n'), 'text/csv');
 }
@@ -700,8 +846,16 @@ const actions = {
   'edit-tx': (el) => { const t = data.txs.find((x) => x.id === el.dataset.id); if (t) openEntry(t); },
   'close-layer': () => closeLayer(),
   'pick-cat': (el) => {
+    if (entry.categoryId !== el.dataset.id) entry.subCategoryId = null;
     entry.categoryId = el.dataset.id;
     document.querySelectorAll('#sheet .cat').forEach((b) => b.classList.toggle('on', b.dataset.id === entry.categoryId));
+    const row = $('#subRow');
+    row.innerHTML = subChips();
+    row.scrollLeft = 0;
+  },
+  'pick-sub': (el) => {
+    entry.subCategoryId = entry.subCategoryId === el.dataset.id ? null : el.dataset.id;
+    document.querySelectorAll('#subRow .chip').forEach((b) => b.classList.toggle('on', b.dataset.id === entry.subCategoryId));
   },
   'key': (el) => pressKey(el.dataset.k),
   'delete-tx': () => {
@@ -713,12 +867,21 @@ const actions = {
   'add-account': () => editAccount(null),
   'edit-account': (el) => { const a = findAcc(el.dataset.id); if (a) editAccount(a); },
   'manage-cats': (el) => openCatManager(el.dataset.type),
-  'add-cat': () => editCat(catMgr.type, null),
-  'edit-cat': (el) => { const c = findCat(catMgr.type, el.dataset.id); if (c) editCat(catMgr.type, c); },
+  'add-cat': () => editCat('expense', null),
+  'edit-cat': (el) => { const c = findCat('expense', el.dataset.id); if (c) editCat('expense', c); },
+  'open-main': (el) => { catMgr.mainId = el.dataset.id; renderCatManager(); },
+  'cat-back': () => { catMgr.mainId = null; renderCatManager(); },
   'cat-up': (el) => {
-    const list = data.categories[catMgr.type];
+    const list = data.categories.expense;
     const i = list.findIndex((c) => c.id === el.dataset.id);
     if (i > 0) { [list[i - 1], list[i]] = [list[i], list[i - 1]]; save(); renderCatManager(); }
+  },
+  'add-sub': () => { const m = findCat('expense', catMgr.mainId); if (m) editSub(m, null); },
+  'edit-sub': (el) => { const m = findCat('expense', catMgr.mainId); const s = findSub(m, el.dataset.id); if (s) editSub(m, s); },
+  'sub-up': (el) => {
+    const m = findCat('expense', catMgr.mainId);
+    const i = m ? m.subs.findIndex((s) => s.id === el.dataset.id) : -1;
+    if (i > 0) { [m.subs[i - 1], m.subs[i]] = [m.subs[i], m.subs[i - 1]]; save(); renderCatManager(); }
   },
   'form-emoji': (el) => {
     form.emoji[el.dataset.key] = el.dataset.v;
