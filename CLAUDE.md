@@ -7,6 +7,16 @@
 - 存放區：https://github.com/brian1205-rgb/xiaozhangben（Public，`main` 分支根目錄就是網站）
 - 目前版本：**1.3.0**（`app.js` 的 `APP_VERSION`）
 
+## 多台電腦開發（重要）
+使用者會在不同電腦開發，GitHub 是唯一的正本：
+- **每次開始工作前先 `git pull`**，避免兩台電腦的修改互相覆蓋。
+- 新電腦第一次設定：
+  1. 安裝 Git：`winget install --id Git.Git -e --source winget`（Git 可能不在 PATH，可用 `C:\Program Files\Git\cmd\git.exe`）
+  2. 下載專案：`git clone https://github.com/brian1205-rgb/xiaozhangben.git`（建議放在英文路徑，例如 `Documents\xiaozhangben`；終端機工具不接受中文路徑）
+  3. 設定 commit 身分（只對這個存放區）：`git config user.name brian1205-rgb`、`git config user.email brian1205-rgb@users.noreply.github.com`
+  4. 第一次 push 會要求登入 GitHub：要在**使用者看得到的終端機分頁**執行 `git push`（背景 shell 無法跳出登入視窗），請使用者在跳出的視窗登入。之後就能直接 push。
+- 這個存放區只有程式碼；**記帳資料在手機裡**，不在電腦或 GitHub 上。
+
 ## 使用者與合作方式（重要）
 - 使用者**沒有程式開發經驗**，請用**繁體中文（台灣）**溝通，步驟要具體、一步一步。
 - 程式都由 Claude 寫。流程：使用者提需求 → Claude 修改 → **在瀏覽器用手機尺寸（375×812）實測** → 測試沒問題後 **Claude 直接 commit 並 push 到 GitHub**（使用者已同意）→ 確認網站已更新 → 請使用者把手機 App 關掉重開。
