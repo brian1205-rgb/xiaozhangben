@@ -124,10 +124,7 @@ function daysForAvg() {
 }
 
 // ---------- 主畫面 ----------
-const TITLES = { list: '小帳本', report: '報表', accounts: '付款方式', settings: '設定' };
-
 function render() {
-  $('#title').textContent = TITLES[ui.tab];
   $('#view').innerHTML = VIEWS[ui.tab]();
   document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === ui.tab));
 }
