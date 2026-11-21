@@ -368,6 +368,7 @@ button.row:active { background: var(--chip); }
   .lay-main > .day:first-child { margin-top: 0; }
   .lay-main > .empty { padding-top: 120px; }
   .cal-hint { display: none; }
+  .cal-btn { display: none; } /* 電腦版固定顯示整月，不用切換按鈕 */
   .cal-card { padding-bottom: 8px; }
 
   /* 報表：總額和長條圖並排；圓餅圖和分類清單並排 */
