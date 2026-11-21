@@ -292,6 +292,13 @@ function viewSettings() {
   return `<section class="group"><h2>分類</h2><div class="rows">
       <button class="row" data-action="manage-cats" data-type="expense"><span>支出分類</span><span class="row-val">${data.categories.expense.length} 個 ›</span></button>
     </div></section>
+    <section class="group"><h2>範例資料</h2><div class="rows">
+      ${demoCount()
+        ? `<button class="row danger" data-action="remove-demo"><span>移除範例資料</span><span class="row-val">${demoCount()} 筆 ›</span></button>`
+        : `<button class="row" data-action="add-demo"><span>加入範例資料</span><span class="row-val">近 3 個月 ›</span></button>`}
+    </div>
+    <p class="hint">想先看看有資料時的樣子，可以加入一些假的支出記錄。範例資料可以一鍵移除，不會動到你自己記的帳。</p>
+    </section>
     <section class="group"><h2>資料備份</h2><div class="rows">
       <button class="row" data-action="export-json"><span>匯出備份檔</span><span class="row-val">.json ›</span></button>
       <button class="row" data-action="import-json"><span>從備份檔還原</span><span class="row-val">›</span></button>
@@ -309,6 +316,48 @@ function viewSettings() {
       <div class="row"><span>儲存狀態</span><span class="row-val">${persist}</span></div>
       <div class="row"><span>版本</span><span class="row-val">${APP_VERSION}</span></div>
     </div></section>`;
+}
+
+// ---------- 範例資料（標記 demo: true，可一鍵移除） ----------
+const demoCount = () => data.txs.filter((t) => t.demo).length;
+
+function makeDemoTxs() {
+  let seed = 20261121;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
+  const between = (a, b, step = 5) => Math.round((a + rnd() * (b - a)) / step) * step;
+  const cat = (name) => (data.categories.expense.find((c) => c.name === name) || data.categories.expense[0]).id;
+  const acc = (i) => (data.accounts[i] || data.accounts[0]).id; // 0 現金、1 銀行、2 信用卡
+  const out = [];
+  const add = (date, catName, amount, accIdx, note = '') => out.push({
+    id: uid(), type: 'expense', amount, categoryId: cat(catName), accountId: acc(accIdx),
+    toAccountId: null, date, note, createdAt: Date.now() + out.length, demo: true,
+  });
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  for (let d = new Date(today.getFullYear(), today.getMonth() - 2, 1); d <= today; d.setDate(d.getDate() + 1)) {
+    const ds = dateStr(d), day = d.getDate(), weekend = d.getDay() === 0 || d.getDay() === 6;
+    if (rnd() < 0.8) add(ds, '早餐', between(45, 95), 0, pick(['蛋餅豆漿', '三明治奶茶', '飯糰', '吐司加蛋', '']));
+    if (rnd() < 0.85) add(ds, '午餐', between(90, 180), 0, pick(['便當', '自助餐', '牛肉麵', '滷肉飯', '水餃', '']));
+    if (rnd() < 0.7) {
+      if (weekend) add(ds, '晚餐', between(250, 650, 10), 2, pick(['火鍋', '燒肉', '義大利麵', '聚餐']));
+      else add(ds, '晚餐', between(100, 250), 0, pick(['拉麵', '小吃', '炒飯', '']));
+    }
+    if (rnd() < 0.5) add(ds, '飲料', between(35, 75), 0, pick(['珍奶', '美式咖啡', '綠茶', '拿鐵']));
+    if (rnd() < 0.15) add(ds, '點心', between(40, 150), 0, pick(['雞排', '蛋糕', '鹹酥雞', '豆花']));
+    if (day === 1) add(ds, '交通', 500, 0, '悠遊卡加值');
+    if (rnd() < 0.06) add(ds, '交通', between(150, 400, 10), 2, '計程車');
+    if (rnd() < 0.06) add(ds, '購物', between(300, 2500, 10), 2, pick(['衣服', '鞋子', '網購', '3C 配件']));
+    if (rnd() < 0.08) add(ds, '日用品', between(80, 400), 0, pick(['衛生紙', '洗衣精', '牙膏', '洗髮精']));
+    if (weekend && rnd() < 0.3) add(ds, '娛樂', between(250, 800, 10), 2, pick(['電影', 'KTV', '桌遊', '展覽']));
+    if (rnd() < 0.02) add(ds, '醫療', between(150, 500, 10), 0, '看診');
+    if (rnd() < 0.03) add(ds, '居家', between(200, 1500, 10), 2, pick(['收納箱', '檯燈', '床單']));
+    if (rnd() < 0.02) add(ds, '教育', between(300, 600, 10), 2, '買書');
+    if (rnd() < 0.015) add(ds, '人情', pick([600, 1200, 2000]), 0, pick(['紅包', '生日禮物']));
+    if (day === 10) add(ds, '水電瓦斯', between(600, 1800, 10), 1, pick(['電費', '水費', '瓦斯費']));
+    if (day === 15) add(ds, '電話網路', 899, 2, '月租費');
+  }
+  return out;
 }
 
 const VIEWS = { list: viewList, report: viewReport, accounts: viewPayments, settings: viewSettings };
@@ -378,8 +427,8 @@ function renderEntry() {
     <div class="amount-preview" id="amountPreview"></div>
     <div class="entry-body">${body}</div>
     <div class="entry-fields">
-      <label class="field"><span>付款</span><select data-bind="accountId">${accOptions(e.accountId)}</select></label>
-      <label class="field"><span>日期</span><input type="date" data-bind="date" value="${esc(e.date)}" required></label>
+      <label class="field field-pay"><select data-bind="accountId" aria-label="付款方式">${accOptions(e.accountId)}</select></label>
+      <label class="field field-date"><input type="date" aria-label="日期" data-bind="date" value="${esc(e.date)}" required></label>
       <label class="field field-note"><span>備註</span><input type="text" data-bind="note" value="${esc(e.note)}" placeholder="寫點什麼…（可不填）" maxlength="60" enterkeyhint="done"></label>
     </div>
     <div class="keypad-wrap"><div class="keypad">
@@ -463,6 +512,7 @@ function saveEntry() {
     note: e.note.trim(),
     createdAt: old?.createdAt ?? Date.now(),
     updatedAt: Date.now(),
+    ...(old?.demo ? { demo: true } : {}), // 修改範例資料後仍算範例資料
   };
   if (old) data.txs[data.txs.indexOf(old)] = tx;
   else data.txs.push(tx);
@@ -683,6 +733,20 @@ const actions = {
     if (form.onSave(values) !== false) closeLayer();
   },
   'form-delete': () => { if (form.onDelete() !== false) closeLayer(); },
+  'add-demo': () => {
+    const demo = makeDemoTxs();
+    data.txs.push(...demo);
+    save();
+    ui.tab = 'list'; ui.ym = currentYM();
+    render(); window.scrollTo(0, 0);
+    toast(`已加入 ${demo.length} 筆範例資料`);
+  },
+  'remove-demo': () => {
+    const n = demoCount();
+    if (!confirm(`要移除 ${n} 筆範例資料嗎？\n你自己記的帳不會受影響。`)) return;
+    data.txs = data.txs.filter((t) => !t.demo);
+    save(); render(); toast('已移除範例資料');
+  },
   'export-json': () => exportJSON(),
   'import-json': () => $('#importFile').click(),
   'export-csv': () => exportCSV(),
