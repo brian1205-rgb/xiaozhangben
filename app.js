@@ -6,7 +6,7 @@
    ============================================================ */
 
 const STORE_KEY = 'xiaozhangben:v1';
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.3.1';
 // 1.2.0 起支出分類分成「主分類 + 次分類」，資料格式 version 2（舊資料自動轉換）。
 // 1.1.0 起只記支出。舊版的收入／轉帳記錄仍保留在資料與備份檔中，只是不顯示。
 
@@ -147,16 +147,17 @@ const ymKey = (ym) => `${ym.y}-${pad(ym.m)}`;
 // day：首頁選取的日期；range：明細清單要看「當天／當週／整月」；calOpen：是否展開整月日曆
 const ui = { tab: 'list', ym: currentYM(), reportSel: null, persisted: null, day: todayStr(), range: 'month', calOpen: false };
 
-function shiftMonth(delta) {
+// 換月份後的狀態：本月就選今天，其他月份選 1 號；清單回到看整月
+function monthState(delta) {
   let { y, m } = ui.ym;
   m += delta;
   while (m < 1) { m += 12; y--; }
   while (m > 12) { m -= 12; y++; }
-  ui.ym = { y, m };
-  // 換月份時：本月就選今天，其他月份選 1 號；清單回到看整月
   const now = currentYM();
-  ui.day = y === now.y && m === now.m ? todayStr() : `${y}-${pad(m)}-01`;
-  ui.range = 'month';
+  return { ym: { y, m }, day: y === now.y && m === now.m ? todayStr() : `${y}-${pad(m)}-01`, range: 'month' };
+}
+function shiftMonth(delta) {
+  Object.assign(ui, monthState(delta));
 }
 
 // ---------- 日期小工具（週一為一週的第一天） ----------
@@ -206,13 +207,21 @@ function monthBar(withCal = false) {
 }
 
 // ---------- 首頁日曆：這星期（可展開成整月） ----------
-function calendarCard(byDay) {
+// 滑到上一頁（-1）或下一頁（1）之後的狀態
+function calNeighbor(dir) {
+  if (ui.calOpen) return monthState(dir);
+  const day = addDays(ui.day, dir * 7);
+  return { ym: ymOf(day), day, range: ui.range };
+}
+
+// 一頁日曆（一週或整月），st = { ym, day, range }
+function calRows(st, byDay) {
   const today = todayStr();
-  const monthKey = ymKey(ui.ym);
+  const monthKey = ymKey(st.ym);
   const cell = (ds) => {
     const cls = ['dcell'];
     if (ds === today) cls.push('today');
-    if (ds === ui.day) cls.push('sel');
+    if (ds === st.day) cls.push('sel');
     if (!ds.startsWith(monthKey)) cls.push('out');
     const n = byDay.get(ds);
     return `<button class="${cls.join(' ')}" data-action="pick-day" data-date="${ds}" aria-label="${md(ds)}${n ? '，支出 ' + fmt(n.sum) : ''}">
@@ -220,21 +229,27 @@ function calendarCard(byDay) {
     </button>`;
   };
   const row = (start) => {
-    const on = ui.range === 'week' && weekStartOf(ui.day) === start ? ' wk-on' : '';
+    const on = st.range === 'week' && weekStartOf(st.day) === start ? ' wk-on' : '';
     return `<div class="wk-row${on}">${[0, 1, 2, 3, 4, 5, 6].map((i) => cell(addDays(start, i))).join('')}</div>`;
   };
-  let rows;
-  if (ui.calOpen) {
-    const first = `${monthKey}-01`;
-    const last = `${monthKey}-${pad(new Date(ui.ym.y, ui.ym.m, 0).getDate())}`;
-    rows = '';
-    for (let s = weekStartOf(first); s <= last; s = addDays(s, 7)) rows += row(s);
-  } else {
-    rows = row(weekStartOf(ui.day));
-  }
+  if (!ui.calOpen) return row(weekStartOf(st.day));
+  const first = `${monthKey}-01`;
+  const last = `${monthKey}-${pad(new Date(st.ym.y, st.ym.m, 0).getDate())}`;
+  let rows = '';
+  for (let s = weekStartOf(first); s <= last; s = addDays(s, 7)) rows += row(s);
+  return rows;
+}
+
+// 左右各多畫一頁（上一週／下一週或上個月／下個月），滑動時手指拖到哪、日曆就跟到哪
+function calendarCard(byDay) {
+  const cur = { ym: ui.ym, day: ui.day, range: ui.range };
   return `<div class="cal-card" data-swipe="${ui.calOpen ? 'month' : 'week'}">
     <div class="wk-head">${['一', '二', '三', '四', '五', '六', '日'].map((w, i) => `<span${i > 4 ? ' class="we"' : ''}>週${w}</span>`).join('')}</div>
-    ${rows}
+    <div class="cal-vp"><div class="cal-track">
+      <div class="cal-pane prev" aria-hidden="true">${calRows(calNeighbor(-1), byDay)}</div>
+      <div class="cal-pane cur">${calRows(cur, byDay)}</div>
+      <div class="cal-pane next" aria-hidden="true">${calRows(calNeighbor(1), byDay)}</div>
+    </div></div>
     <div class="cal-hint">${ui.calOpen ? '左右滑動切換月份' : '左右滑動切換星期'}</div>
   </div>`;
 }
@@ -1026,23 +1041,82 @@ document.addEventListener('click', (ev) => {
   if (fn) { ev.preventDefault(); fn(el, ev); }
 });
 
-// 首頁日曆左右滑動：收起時切換星期，展開時切換月份
-let swipe = null;
-document.addEventListener('touchstart', (ev) => {
+// 首頁日曆左右滑動：收起時切換星期，展開時切換月份。
+// 日曆跟著手指移動，放開後順順地滑到下一頁（或彈回原位）。
+let swipe = null, calBusy = false, swipeEndAt = 0;
+const EASE = 'cubic-bezier(.22,.8,.28,1)';
+document.addEventListener('pointerdown', (ev) => {
+  if (calBusy || !ev.isPrimary || (ev.pointerType === 'mouse' && ev.button !== 0)) return;
   const card = ev.target.closest('[data-swipe]');
-  swipe = card ? { x: ev.touches[0].clientX, y: ev.touches[0].clientY, mode: card.dataset.swipe } : null;
-}, { passive: true });
-document.addEventListener('touchend', (ev) => {
-  if (!swipe) return;
-  const dx = ev.changedTouches[0].clientX - swipe.x, dy = ev.changedTouches[0].clientY - swipe.y;
-  const mode = swipe.mode;
-  swipe = null;
-  if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
-  const dir = dx < 0 ? 1 : -1; // 往左滑看下一週／下個月
-  if (mode === 'week') selectDay(addDays(ui.day, dir * 7));
-  else shiftMonth(dir);
-  render();
+  if (!card) { swipe = null; return; }
+  const track = card.querySelector('.cal-track');
+  swipe = { card, track, vp: card.querySelector('.cal-vp'), x: ev.clientX, y: ev.clientY, t: ev.timeStamp, dx: 0, axis: null, id: ev.pointerId, hist: [] };
 });
+document.addEventListener('pointermove', (ev) => {
+  if (!swipe || ev.pointerId !== swipe.id) return;
+  const dx = ev.clientX - swipe.x, dy = ev.clientY - swipe.y;
+  if (!swipe.axis) {
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+    swipe.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+    if (swipe.axis === 'y') { swipe = null; return; } // 上下捲動就交給頁面
+    swipe.track.style.transition = 'none';
+    try { swipe.card.setPointerCapture(ev.pointerId); } catch {}
+  }
+  swipe.dx = dx;
+  swipe.hist.push([ev.timeStamp, dx]);
+  if (swipe.hist.length > 6) swipe.hist.shift();
+  swipe.track.style.transform = `translate3d(${dx}px,0,0)`;
+  if (ui.calOpen) {
+    // 整月模式：兩個月週數不同時，高度跟著拖動的比例慢慢變
+    const s = swipe;
+    if (!s.h) s.h = { cur: s.vp.offsetHeight, prev: s.card.querySelector('.cal-pane.prev').offsetHeight, next: s.card.querySelector('.cal-pane.next').offsetHeight, w: s.vp.offsetWidth };
+    const p = Math.min(1, Math.abs(dx) / s.h.w), to = dx < 0 ? s.h.next : s.h.prev;
+    s.vp.style.transition = 'none';
+    s.vp.style.height = `${s.h.cur + (to - s.h.cur) * p}px`;
+  }
+});
+function endSwipe(ev, cancelled) {
+  if (!swipe || ev.pointerId !== swipe.id) return;
+  const s = swipe;
+  swipe = null;
+  if (s.axis !== 'x') return;
+  swipeEndAt = Date.now();
+  const w = s.vp.offsetWidth;
+  // 用最後一小段的速度判斷是不是「快速一撥」
+  const h = s.hist, a = h[0], b = h[h.length - 1];
+  const v = a && b && b[0] > a[0] ? (b[1] - a[1]) / (b[0] - a[0]) : 0; // px/ms
+  let dir = 0;
+  if (!cancelled) {
+    if (Math.abs(s.dx) > w * 0.3) dir = s.dx < 0 ? 1 : -1;
+    else if (Math.abs(v) > 0.35 && Math.abs(s.dx) > 16 && Math.sign(v) === Math.sign(s.dx)) dir = v < 0 ? 1 : -1;
+  }
+  calBusy = true;
+  const remain = dir ? w - Math.abs(s.dx) : Math.abs(s.dx);
+  const ms = Math.round(Math.min(320, Math.max(160, remain * 0.9)));
+  s.track.style.transition = `transform ${ms}ms ${EASE}`;
+  s.track.style.transform = dir ? `translate3d(${-dir * w}px,0,0)` : 'translate3d(0,0,0)';
+  if (s.h) {
+    // 整月模式：高度一起平滑變到目標月份（或回到原本）
+    s.vp.style.transition = `height ${ms}ms ${EASE}`;
+    s.vp.style.height = `${dir > 0 ? s.h.next : dir < 0 ? s.h.prev : s.h.cur}px`;
+  }
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    calBusy = false;
+    if (dir) { Object.assign(ui, calNeighbor(dir)); render(); }
+    else { s.track.style.transition = ''; s.track.style.transform = ''; s.vp.style.transition = ''; s.vp.style.height = ''; }
+  };
+  s.track.addEventListener('transitionend', (e) => { if (e.propertyName === 'transform') finish(); }, { once: false });
+  setTimeout(finish, ms + 80); // 保險：萬一 transitionend 沒觸發
+}
+document.addEventListener('pointerup', (ev) => endSwipe(ev, false));
+document.addEventListener('pointercancel', (ev) => endSwipe(ev, true));
+// 剛滑完不要誤觸日期
+document.addEventListener('click', (ev) => {
+  if (Date.now() - swipeEndAt < 350 && ev.target.closest('[data-swipe]')) { ev.stopPropagation(); ev.preventDefault(); }
+}, true);
 
 // 記帳畫面裡的下拉選單、日期、備註
 const onBind = (ev) => {

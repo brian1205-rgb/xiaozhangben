@@ -1,11 +1,11 @@
-# 小帳本 — 專案說明（給 Claude 與開發者）
+﻿# 小帳本 — 專案說明（給 Claude 與開發者）
 
 個人用的記帳 App（只記支出），參考 CWMoney 的功能但外觀、名稱都是自己的。
 做成 **PWA 網頁 App**：放在 GitHub Pages，用手機瀏覽器「加入主畫面」安裝。
 
 - 網站：https://brian1205-rgb.github.io/xiaozhangben/
 - 存放區：https://github.com/brian1205-rgb/xiaozhangben（Public，`main` 分支根目錄就是網站）
-- 目前版本：**1.3.0**（`app.js` 的 `APP_VERSION`）
+- 目前版本：**1.3.1**（`app.js` 的 `APP_VERSION`）
 
 ## 多台電腦開發（重要）
 使用者會在不同電腦開發，GitHub 是唯一的正本：
@@ -29,7 +29,7 @@
 index.html            頁面骨架、底部選單
 app.js                全部程式（無框架、無打包，原生 JS）
 style.css             樣式（固定淺色）
-sw.js                 Service Worker：network-first 離線快取。改了檔案要把 CACHE 版本 +1（目前 xiaozhangben-v4）
+sw.js                 Service Worker：network-first 離線快取。改了檔案要把 CACHE 版本 +1（目前 xiaozhangben-v5）
 manifest.webmanifest  PWA 設定
 icon-192.png / icon-512.png / apple-touch-icon.png   App 圖示（手繪暖色風）
 _config.yml           GitHub Pages 設定：排除 CLAUDE.md；_ 開頭資料夾本來就不會發佈
@@ -55,7 +55,7 @@ _dev/tools/           開發工具（不會出現在網站上）
 - **改資料格式一定要寫轉換程式並測舊資料**；匯入備份也會經過 `normalize()`。
 
 ## 功能現況（1.3.0）
-- 首頁：月份切換、**這星期日曆**（有記錄的日子有圓點，可展開整月、左右滑動換週/月）、**今日／本週／本月**三格（點了切換清單範圍）、依日期分組的明細。選了某天按＋會預設記在那天。
+- 首頁：月份切換、**這星期日曆**（有記錄的日子有圓點，可展開整月；左右滑動時日曆跟著手指移動，放開後平滑換週/月）、**今日／本週／本月**三格（點了切換清單範圍）、依日期分組的明細。選了某天按＋會預設記在那天。
 - 記一筆：計算機鍵盤（可 + −）、主分類格子 → 次分類小按鈕（可不選）、付款方式、日期、備註。
 - 報表：主分類圓餅圖（前 5 名＋其他），點主分類展開次分類明細。
 - 付款：每種付款方式本月花多少。
