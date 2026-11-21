@@ -6,7 +6,7 @@
    ============================================================ */
 
 const STORE_KEY = 'xiaozhangben:v1';
-const APP_VERSION = '1.4.2';
+const APP_VERSION = '1.5.0';
 // 1.2.0 起支出分類分成「主分類 + 次分類」，資料格式 version 2（舊資料自動轉換）。
 // 1.1.0 起只記支出。舊版的收入／轉帳記錄仍保留在資料與備份檔中，只是不顯示。
 
@@ -386,12 +386,60 @@ function accFilterBar() {
   </div>`;
 }
 
+// 近 12 個月支出長條圖（跟著上方的帳戶篩選）；點長條可以切到那個月
+function trendCard() {
+  const accs = ui.reportAccs;
+  const idx = (ym) => ym.y * 12 + (ym.m - 1);
+  const now = currentYM();
+  // 平常顯示到本月為止的 12 個月；如果正在看的月份不在這段裡，就改成以那個月為結尾
+  let end = idx(now);
+  if (idx(ui.ym) > end || idx(ui.ym) < end - 11) end = idx(ui.ym);
+  const months = [];
+  for (let i = end - 11; i <= end; i++) months.push({ y: Math.floor(i / 12), m: (i % 12) + 1 });
+  const sums = new Map();
+  for (const t of data.txs) {
+    if (t.type !== 'expense' || (accs.size && !accs.has(t.accountId))) continue;
+    const k = t.date.slice(0, 7);
+    sums.set(k, (sums.get(k) || 0) + t.amount);
+  }
+  const vals = months.map((ym) => round2(sums.get(ymKey(ym)) || 0));
+  const max = Math.max(...vals);
+  // 月平均只算有記帳的月份，剛開始用的時候才不會被前面空白的月份拉低
+  const used = vals.filter((v) => v > 0);
+  const avg = used.length ? used.reduce((s, v) => s + v, 0) / used.length : 0;
+  const selKey = ymKey(ui.ym);
+  const selVal = round2(sums.get(selKey) || 0);
+  const first = months[0], last = months[11];
+  return `<div class="card trend">
+    <div class="trend-head">
+      <span class="trend-title">近 12 個月支出</span>
+      <span class="trend-sel">${ui.ym.m} 月 <b>$${fmt(selVal)}</b></span>
+    </div>
+    <div class="trend-bars">
+      ${max && used.length > 1 ? `<div class="trend-avg" style="--p:${((avg / max) * 0.9).toFixed(4)}"></div>` : ''}
+      ${months.map((ym, i) => {
+        const v = vals[i];
+        const h = max ? (v / max) * 90 : 0; // 最高的長條佔 90%，上面留一點空間
+        const on = ymKey(ym) === selKey ? ' on' : '';
+        return `<button class="tb${on}" data-action="trend-month" data-y="${ym.y}" data-m="${ym.m}" aria-label="${ym.y} 年 ${ym.m} 月 $${fmt(v)}" title="${ym.y}/${ym.m} $${fmt(v)}">
+          <span class="tb-plot"><span class="tb-bar${v ? '' : ' zero'}" style="height:${v ? Math.max(2, h).toFixed(1) : 0}%"></span></span>
+          <span class="tb-lbl">${ym.m}</span>
+        </button>`;
+      }).join('')}
+    </div>
+    <div class="trend-foot">
+      <span>${used.length > 1 ? `<i class="avg-key"></i>月平均 $${fmt(Math.round(avg))}` : ''}</span>
+      <span>${first.y}/${first.m} – ${last.y}/${last.m}</span>
+    </div>
+  </div>`;
+}
+
 function viewReport() {
   const accs = ui.reportAccs;
   const txs = accs.size ? monthTxs().filter((t) => accs.has(t.accountId)) : monthTxs();
   const type = 'expense';
   const label = accs.size ? `${ui.ym.m} 月支出 · ${data.accounts.filter((a) => accs.has(a.id)).map((a) => a.name).join('、')}` : undefined;
-  let html = monthBar() + accFilterBar() + summaryCard(txs, label);
+  let html = monthBar() + accFilterBar() + summaryCard(txs, label) + trendCard();
 
   const sums = new Map();
   for (const t of txs) sums.set(t.categoryId, (sums.get(t.categoryId) || 0) + t.amount);
@@ -438,7 +486,7 @@ function viewReport() {
       }).join('')}
     </div>
   </div>
-  <p class="hint">上方可以選一個或多個帳戶，只看那些帳戶的支出比例。點主分類可以看它底下各個次分類花了多少。</p>`;
+  <p class="hint">上方可以選一個或多個帳戶，只看那些帳戶的支出。點長條圖可以切換到那個月。點主分類可以看它底下各個次分類花了多少。</p>`;
   return html;
 }
 
@@ -994,6 +1042,12 @@ const actions = {
     if (!confirm('確定刪除這筆記錄嗎？')) return;
     data.txs = data.txs.filter((t) => t.id !== entry.id);
     save(); closeLayer(); render(); toast('已刪除');
+  },
+  'trend-month': (el) => {
+    const y = Number(el.dataset.y), m = Number(el.dataset.m);
+    Object.assign(ui, monthState((y - ui.ym.y) * 12 + (m - ui.ym.m)));
+    ui.reportSel = null;
+    render();
   },
   'report-acc': (el) => {
     const id = el.dataset.id;

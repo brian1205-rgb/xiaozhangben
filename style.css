@@ -223,6 +223,23 @@ button.row:active { background: var(--chip); }
 .cat-row-main { display: flex; align-items: center; gap: 12px; flex: 1; text-align: left; padding: 4px 0; font-weight: 500; }
 
 /* report */
+/* 近 12 個月長條圖 */
+.trend { padding: 14px 12px 10px; }
+.trend-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin: 0 4px 8px; }
+.trend-title { font-weight: 600; }
+.trend-sel { color: var(--text2); font-size: 15.6px; white-space: nowrap; }
+.trend-sel b { color: var(--text); font-size: 19.2px; font-variant-numeric: tabular-nums; }
+.trend-bars { position: relative; display: flex; gap: 2px; height: 160px; }
+.tb { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; }
+.tb-plot { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; }
+.tb-bar { width: 72%; max-width: 22px; border-radius: 4px 4px 0 0; background: #93cdb9; transition: background .15s; }
+.tb.on .tb-bar { background: var(--brand); }
+.tb-bar.zero { height: 2px !important; background: var(--line); border-radius: 1px; }
+.tb-lbl { height: 22px; line-height: 22px; font-size: 13.2px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tb.on .tb-lbl { color: var(--brand); font-weight: 700; }
+.trend-avg { position: absolute; left: 0; right: 0; bottom: calc(22px + (100% - 22px) * var(--p)); border-top: 1.5px dashed #b9b8b0; pointer-events: none; z-index: 1; }
+.trend-foot { display: flex; justify-content: space-between; gap: 8px; font-size: 13.2px; color: var(--text2); margin: 6px 4px 0; }
+.avg-key { display: inline-block; width: 16px; border-top: 1.5px dashed #b9b8b0; vertical-align: middle; margin-right: 5px; }
 .acc-filter { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
 .donut-box { position: relative; width: 240px; height: 240px; margin: 4px auto 12px; }
 .donut { width: 100%; height: 100%; display: block; }
