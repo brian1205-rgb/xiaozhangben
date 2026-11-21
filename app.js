@@ -6,7 +6,7 @@
    ============================================================ */
 
 const STORE_KEY = 'xiaozhangben:v1';
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 // 1.2.0 起支出分類分成「主分類 + 次分類」，資料格式 version 2（舊資料自動轉換）。
 // 1.1.0 起只記支出。舊版的收入／轉帳記錄仍保留在資料與備份檔中，只是不顯示。
 
@@ -144,7 +144,8 @@ if (migratedOnLoad) { save(); migratedOnLoad = false; } // 舊資料轉換完立
 // ---------- 畫面狀態 ----------
 const currentYM = () => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() + 1 }; };
 const ymKey = (ym) => `${ym.y}-${pad(ym.m)}`;
-const ui = { tab: 'list', ym: currentYM(), reportSel: null, persisted: null };
+// day：首頁選取的日期；range：明細清單要看「當天／當週／整月」；calOpen：是否展開整月日曆
+const ui = { tab: 'list', ym: currentYM(), reportSel: null, persisted: null, day: todayStr(), range: 'month', calOpen: false };
 
 function shiftMonth(delta) {
   let { y, m } = ui.ym;
@@ -152,6 +153,21 @@ function shiftMonth(delta) {
   while (m < 1) { m += 12; y--; }
   while (m > 12) { m -= 12; y++; }
   ui.ym = { y, m };
+  // 換月份時：本月就選今天，其他月份選 1 號；清單回到看整月
+  const now = currentYM();
+  ui.day = y === now.y && m === now.m ? todayStr() : `${y}-${pad(m)}-01`;
+  ui.range = 'month';
+}
+
+// ---------- 日期小工具（週一為一週的第一天） ----------
+const addDays = (ds, n) => { const d = parseDate(ds); d.setDate(d.getDate() + n); return dateStr(d); };
+const weekStartOf = (ds) => { const d = parseDate(ds); return addDays(ds, -((d.getDay() + 6) % 7)); };
+const ymOf = (ds) => { const [y, m] = ds.split('-').map(Number); return { y, m }; };
+const md = (ds) => { const d = parseDate(ds); return `${d.getMonth() + 1}/${d.getDate()}`; };
+function selectDay(ds, range) {
+  ui.day = ds;
+  ui.ym = ymOf(ds);
+  if (range) ui.range = range;
 }
 
 const findCat = (type, id) => (data.categories[type] || []).find((c) => c.id === id);
@@ -175,11 +191,69 @@ function render() {
   document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === ui.tab));
 }
 
-function monthBar() {
+function monthBar(withCal = false) {
+  const cal = withCal
+    ? `<button class="cal-btn${ui.calOpen ? ' on' : ''}" data-action="toggle-cal" aria-label="${ui.calOpen ? '收起日曆' : '展開整月日曆'}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>
+      </button>`
+    : '';
   return `<div class="monthbar">
     <button class="icon-btn" data-action="month" data-d="-1" aria-label="上個月">‹</button>
     <button class="month-label" data-action="month-now" title="回到本月">${ui.ym.y} 年 ${ui.ym.m} 月</button>
     <button class="icon-btn" data-action="month" data-d="1" aria-label="下個月">›</button>
+    ${cal}
+  </div>`;
+}
+
+// ---------- 首頁日曆：這星期（可展開成整月） ----------
+function calendarCard(byDay) {
+  const today = todayStr();
+  const monthKey = ymKey(ui.ym);
+  const cell = (ds) => {
+    const cls = ['dcell'];
+    if (ds === today) cls.push('today');
+    if (ds === ui.day) cls.push('sel');
+    if (!ds.startsWith(monthKey)) cls.push('out');
+    const n = byDay.get(ds);
+    return `<button class="${cls.join(' ')}" data-action="pick-day" data-date="${ds}" aria-label="${md(ds)}${n ? '，支出 ' + fmt(n.sum) : ''}">
+      <span class="dnum">${parseDate(ds).getDate()}</span><span class="ddot${n ? ' on' : ''}"></span>
+    </button>`;
+  };
+  const row = (start) => {
+    const on = ui.range === 'week' && weekStartOf(ui.day) === start ? ' wk-on' : '';
+    return `<div class="wk-row${on}">${[0, 1, 2, 3, 4, 5, 6].map((i) => cell(addDays(start, i))).join('')}</div>`;
+  };
+  let rows;
+  if (ui.calOpen) {
+    const first = `${monthKey}-01`;
+    const last = `${monthKey}-${pad(new Date(ui.ym.y, ui.ym.m, 0).getDate())}`;
+    rows = '';
+    for (let s = weekStartOf(first); s <= last; s = addDays(s, 7)) rows += row(s);
+  } else {
+    rows = row(weekStartOf(ui.day));
+  }
+  return `<div class="cal-card" data-swipe="${ui.calOpen ? 'month' : 'week'}">
+    <div class="wk-head">${['一', '二', '三', '四', '五', '六', '日'].map((w, i) => `<span${i > 4 ? ' class="we"' : ''}>週${w}</span>`).join('')}</div>
+    ${rows}
+    <div class="cal-hint">${ui.calOpen ? '左右滑動切換月份' : '左右滑動切換星期'}</div>
+  </div>`;
+}
+
+// 今日／本週／本月：同時是明細清單的篩選按鈕
+function rangeStats(byDay) {
+  const today = todayStr();
+  const ws = weekStartOf(ui.day), we = addDays(ws, 6);
+  let wSum = 0, wCnt = 0;
+  for (let ds = ws; ds <= we; ds = addDays(ds, 1)) { const n = byDay.get(ds); if (n) { wSum += n.sum; wCnt += n.cnt; } }
+  const mTx = monthTxs();
+  const mSum = sumAmt(mTx);
+  const d = byDay.get(ui.day) || { sum: 0, cnt: 0 };
+  const box = (r, label, value, sub) => `<button class="stat${ui.range === r ? ' on' : ''}" data-action="range" data-r="${r}">
+    <span class="lbl">${label}</span><span class="sv">$${fmt(value)}</span><span class="ss">${sub}</span></button>`;
+  return `<div class="stats">
+    ${box('day', ui.day === today ? '今日' : md(ui.day), d.sum, `${d.cnt} 筆`)}
+    ${box('week', ws <= today && today <= we ? '本週' : `${md(ws)}–${md(we)}`, round2(wSum), `${wCnt} 筆`)}
+    ${box('month', `${ui.ym.m} 月`, mSum, `日均 $${fmt(Math.round(mSum / daysForAvg()))}`)}
   </div>`;
 }
 
@@ -216,12 +290,32 @@ function dayLabel(ds) {
 }
 
 function viewList() {
-  const txs = monthTxs().sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
+  // 每天的支出總額與筆數（給日曆小圓點和統計用）
+  const byDay = new Map();
+  for (const t of data.txs) {
+    if (t.type !== 'expense') continue;
+    const n = byDay.get(t.date) || { sum: 0, cnt: 0 };
+    n.sum = round2(n.sum + t.amount); n.cnt++;
+    byDay.set(t.date, n);
+  }
+  let pool, emptyMsg;
+  if (ui.range === 'day') {
+    pool = data.txs.filter((t) => t.type === 'expense' && t.date === ui.day);
+    emptyMsg = `${md(ui.day)} 還沒有記錄`;
+  } else if (ui.range === 'week') {
+    const ws = weekStartOf(ui.day), we = addDays(ws, 6);
+    pool = data.txs.filter((t) => t.type === 'expense' && t.date >= ws && t.date <= we);
+    emptyMsg = '這個星期還沒有記錄';
+  } else {
+    pool = monthTxs();
+    emptyMsg = '這個月還沒有記錄';
+  }
+  const txs = pool.sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
   let html = '';
   if (!storageOK) html += `<div class="banner">⚠️ 這個瀏覽器目前無法儲存資料（可能是私密瀏覽模式），關掉後記錄會消失。</div>`;
-  html += monthBar() + summaryCard(txs);
+  html += monthBar(true) + calendarCard(byDay) + rangeStats(byDay);
   if (!txs.length) {
-    return html + `<div class="empty"><div class="big">📝</div>這個月還沒有記錄<br>按下方 ＋ 記第一筆吧</div>`;
+    return html + `<div class="empty"><div class="big">📝</div>${emptyMsg}<br>按下方 ＋ 記一筆吧</div>`;
   }
   const groups = new Map();
   for (const t of txs) {
@@ -480,7 +574,7 @@ function openEntry(tx) {
     categoryId: tx?.categoryId ?? data.categories.expense[0]?.id ?? null,
     subCategoryId: tx?.subCategoryId ?? null,
     accountId: tx?.accountId ?? lastAcc ?? null,
-    date: tx?.date ?? todayStr(),
+    date: tx?.date ?? (ui.tab === 'list' && ui.range === 'day' ? ui.day : todayStr()), // 選了某一天就預設記在那天
     note: tx?.note ?? '',
   };
   renderEntry();
@@ -611,8 +705,7 @@ function saveEntry() {
   data.prefs.lastAccountId = e.accountId;
   save();
 
-  const [y, m] = tx.date.split('-').map(Number);
-  ui.ym = { y, m };
+  selectDay(tx.date); // 跳到這筆記錄的日期（保持目前的今日／本週／本月篩選）
   closeLayer();
   render();
   toast(old ? '已更新' : `已記下 $${fmt(amount)}`);
@@ -841,7 +934,16 @@ function toast(msg) {
 const actions = {
   'tab': (el) => { ui.tab = el.dataset.tab; ui.reportSel = null; render(); window.scrollTo(0, 0); },
   'month': (el) => { shiftMonth(Number(el.dataset.d)); ui.reportSel = null; render(); },
-  'month-now': () => { ui.ym = currentYM(); ui.reportSel = null; render(); },
+  'month-now': () => { ui.ym = currentYM(); ui.day = todayStr(); ui.range = 'month'; ui.reportSel = null; render(); },
+  'toggle-cal': () => { ui.calOpen = !ui.calOpen; render(); },
+  'pick-day': (el) => {
+    const ds = el.dataset.date;
+    // 再點一次已選的那天 → 回到看整月
+    if (ds === ui.day && ui.range === 'day') ui.range = 'month';
+    else selectDay(ds, 'day');
+    render();
+  },
+  'range': (el) => { ui.range = el.dataset.r; render(); },
   'new-tx': () => openEntry(null),
   'edit-tx': (el) => { const t = data.txs.find((x) => x.id === el.dataset.id); if (t) openEntry(t); },
   'close-layer': () => closeLayer(),
@@ -922,6 +1024,24 @@ document.addEventListener('click', (ev) => {
   if (!el) return;
   const fn = actions[el.dataset.action];
   if (fn) { ev.preventDefault(); fn(el, ev); }
+});
+
+// 首頁日曆左右滑動：收起時切換星期，展開時切換月份
+let swipe = null;
+document.addEventListener('touchstart', (ev) => {
+  const card = ev.target.closest('[data-swipe]');
+  swipe = card ? { x: ev.touches[0].clientX, y: ev.touches[0].clientY, mode: card.dataset.swipe } : null;
+}, { passive: true });
+document.addEventListener('touchend', (ev) => {
+  if (!swipe) return;
+  const dx = ev.changedTouches[0].clientX - swipe.x, dy = ev.changedTouches[0].clientY - swipe.y;
+  const mode = swipe.mode;
+  swipe = null;
+  if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+  const dir = dx < 0 ? 1 : -1; // 往左滑看下一週／下個月
+  if (mode === 'week') selectDay(addDays(ui.day, dir * 7));
+  else shiftMonth(dir);
+  render();
 });
 
 // 記帳畫面裡的下拉選單、日期、備註
