@@ -392,3 +392,9 @@ button.row:active { background: var(--chip); }
 .tx-icon, .cat-icon, .crow .ci, .emoji-grid button, .empty .big, .ledger-pill .lp-icon {
   font-family: "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
 }
+
+/* 匯出月份明細 */
+.export-sum { background: var(--card); border-radius: 12px; padding: 12px 14px; color: var(--text2); margin-bottom: 4px; }
+.export-sum b { color: var(--text); font-size: 21.6px; font-variant-numeric: tabular-nums; }
+.btn-block { display: block; width: 100%; margin: 16px 0 4px; padding: 14px; border-radius: 14px; background: var(--brand); color: #fff; font-weight: 700; }
+.btn-block:active { filter: brightness(.95); }

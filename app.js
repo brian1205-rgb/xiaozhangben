@@ -12,7 +12,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 const STORE_KEY = 'xiaozhangben:v1'; // 舊版（1.x）存在手機裡的資料
-const APP_VERSION = '2.1.1';
+const APP_VERSION = '2.2.0';
 // 1.2.0 起支出分類分成「主分類 + 次分類」，資料格式 version 2（舊資料自動轉換）。
 // 1.1.0 起只記支出。舊版的收入／轉帳記錄仍保留在資料與備份檔中，只是不顯示。
 
@@ -805,6 +805,7 @@ function viewReport() {
       }).join('')}
     </div>
   </div>
+  <button class="btn-add" data-action="month-export">匯出 ${ui.ym.m} 月的支出明細</button>
   <p class="hint">上方可以選一個或多個帳戶，只看那些帳戶的支出。點長條圖可以切換到那個月。點主分類可以看它底下各個次分類花了多少。</p>`;
   return html;
 }
@@ -885,7 +886,8 @@ function viewSettings() {
     <section class="group"><h2>資料備份（目前這本帳本）</h2><div class="rows">
       <button class="row" data-action="export-json"><span>匯出備份檔</span><span class="row-val">.json ›</span></button>
       ${fam && !isOwner() ? '' : `<button class="row" data-action="import-json"><span>從備份檔還原</span><span class="row-val">›</span></button>`}
-      <button class="row" data-action="export-csv"><span>匯出成 Excel 可開的檔案</span><span class="row-val">.csv ›</span></button>
+      <button class="row" data-action="month-export"><span>匯出某個月的明細</span><span class="row-val">選月份 ›</span></button>
+      <button class="row" data-action="export-csv"><span>匯出全部明細</span><span class="row-val">.csv ›</span></button>
       ${fam ? '' : `<button class="row danger" data-action="clear-all"><span>清除個人帳本的所有資料</span></button>`}
     </div>
     <p class="hint">記帳資料存在雲端（Google Firebase），換手機只要登入同一個 Google 帳號就會回來。沒有網路時也能記，連上網路後會自動上傳。想多一份保險，可以偶爾匯出備份檔。</p>
@@ -1318,15 +1320,63 @@ function exportJSON() {
   shareOrDownload(`小帳本備份-${stamp()}.json`, JSON.stringify(payload, null, 1), 'application/json');
 }
 
-function exportCSV() {
+// 明細轉成 CSV（Excel 可以直接開）；家用帳本多一欄「記錄者」；最後一行是合計
+function buildCSV(txs) {
   const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const lines = [['日期', '主分類', '次分類', '金額', '付款方式', '備註'].map(q).join(',')];
-  const sorted = data.txs.filter((t) => t.type === 'expense').sort((a, b) => a.date.localeCompare(b.date));
+  const fam = isFamily();
+  const who = (t) => (t.by ? (cloud.meta?.members?.[t.by]?.name || t.byName || '') : '');
+  const head = ['日期', '主分類', '次分類', '金額', '付款方式', '備註', ...(fam ? ['記錄者'] : [])];
+  const lines = [head.map(q).join(',')];
+  const sorted = txs.filter((t) => t.type === 'expense').sort((a, b) => a.date.localeCompare(b.date) || (a.createdAt || 0) - (b.createdAt || 0));
   for (const t of sorted) {
     const c = findCat('expense', t.categoryId);
-    lines.push([t.date, c?.name ?? '未分類', findSub(c, t.subCategoryId)?.name ?? '', t.amount, accName(t.accountId), t.note].map(q).join(','));
+    lines.push([t.date, c?.name ?? '未分類', findSub(c, t.subCategoryId)?.name ?? '', t.amount, accName(t.accountId), t.note, ...(fam ? [who(t)] : [])].map(q).join(','));
   }
-  shareOrDownload(`小帳本明細-${stamp()}.csv`, '﻿' + lines.join('\r\n'), 'text/csv');
+  lines.push('');
+  lines.push([`合計（${sorted.length} 筆）`, '', '', sumAmt(sorted)].map(q).join(','));
+  return '﻿' + lines.join('\r\n');
+}
+const ledgerFileName = () => (isFamily() ? (cloud.meta?.name || '家用') : '個人');
+
+function exportCSV() {
+  shareOrDownload(`小帳本-${ledgerFileName()}-全部明細-${stamp()}.csv`, buildCSV(data.txs), 'text/csv');
+}
+
+// 選一個月份，匯出那個月的支出明細（含合計）
+function openMonthExport(ym = ui.ym) {
+  const val = ymKey(ym);
+  const stats = (k) => { const list = data.txs.filter((t) => t.type === 'expense' && t.date.startsWith(k)); return { n: list.length, sum: sumAmt(list) }; };
+  const s = stats(val);
+  $('#modal').innerHTML = `<div class="modal-card" role="dialog" aria-modal="true" aria-label="匯出月份明細">
+    <div class="modal-head">
+      <button class="text-btn" data-action="close-layer">取消</button>
+      <h3>匯出月份明細</h3>
+      <button class="text-btn" data-action="do-month-export">匯出</button>
+    </div>
+    <div class="form-body">
+      <label class="f-row"><span>選擇月份</span><input type="month" id="exportMonth" value="${val}" max="${ymKey(currentYM())}"></label>
+      <div class="export-sum" id="exportSum">${s.n} 筆，共 <b>$${fmt(s.sum)}</b></div>
+      <p class="hint">會匯出${esc(isFamily() ? `「${cloud.meta?.name || '家用'}」帳本` : '個人帳本')}這個月每一筆支出（日期、分類、金額、付款方式、備註${isFamily() ? '、記錄者' : ''}），最後一行是總支出。檔案是 .csv，用 Excel 或 Google 試算表都能打開。</p>
+      <button class="btn-block" data-action="do-month-export">匯出這個月的明細</button>
+    </div>
+  </div>`;
+  const inp = $('#exportMonth');
+  inp.addEventListener('input', () => {
+    if (!/^\d{4}-\d{2}$/.test(inp.value)) return;
+    const x = stats(inp.value);
+    $('#exportSum').innerHTML = `${x.n} 筆，共 <b>$${fmt(x.sum)}</b>`;
+  });
+  openLayer('modal');
+}
+
+function doMonthExport() {
+  const v = $('#exportMonth')?.value;
+  if (!/^\d{4}-\d{2}$/.test(v || '')) { toast('請選擇月份'); return; }
+  const list = data.txs.filter((t) => t.type === 'expense' && t.date.startsWith(v));
+  if (!list.length) { toast('這個月沒有支出記錄'); return; }
+  const [y, m] = v.split('-');
+  shareOrDownload(`小帳本-${ledgerFileName()}-${y}年${Number(m)}月明細.csv`, buildCSV(list), 'text/csv');
+  closeLayer();
 }
 
 $('#importFile').addEventListener('change', async (ev) => {
@@ -1526,6 +1576,8 @@ const actions = {
   'export-json': () => exportJSON(),
   'import-json': () => $('#importFile').click(),
   'export-csv': () => exportCSV(),
+  'month-export': () => openMonthExport(),
+  'do-month-export': () => doMonthExport(),
   'clear-all': () => {
     if (isFamily()) return;
     if (!confirm('這會刪除個人帳本（雲端）的所有記錄、付款方式和分類設定，而且無法復原。\n建議先「匯出備份檔」。\n\n確定要全部清除嗎？')) return;

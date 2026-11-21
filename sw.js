@@ -1,7 +1,7 @@
 ﻿// 離線快取：有網路時抓最新版，沒網路時用快取，讓 App 在飛航模式也能開
 // GitHub Pages 會叫瀏覽器把檔案留 10 分鐘，所以抓檔案時都要求「先問伺服器有沒有新版」，
 // 這樣一上傳新版，手機重開 App 就拿得到（沒改的檔案伺服器只回「沒變」，很省流量）。
-const CACHE = 'xiaozhangben-v15';
+const CACHE = 'xiaozhangben-v16';
 const ASSETS = ['./', './index.html', './style.css', './app.js', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
