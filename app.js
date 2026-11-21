@@ -6,7 +6,7 @@
    ============================================================ */
 
 const STORE_KEY = 'xiaozhangben:v1';
-const APP_VERSION = '1.3.1';
+const APP_VERSION = '1.4.0';
 // 1.2.0 起支出分類分成「主分類 + 次分類」，資料格式 version 2（舊資料自動轉換）。
 // 1.1.0 起只記支出。舊版的收入／轉帳記錄仍保留在資料與備份檔中，只是不顯示。
 
@@ -145,7 +145,7 @@ if (migratedOnLoad) { save(); migratedOnLoad = false; } // 舊資料轉換完立
 const currentYM = () => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() + 1 }; };
 const ymKey = (ym) => `${ym.y}-${pad(ym.m)}`;
 // day：首頁選取的日期；range：明細清單要看「當天／當週／整月」；calOpen：是否展開整月日曆
-const ui = { tab: 'list', ym: currentYM(), reportSel: null, persisted: null, day: todayStr(), range: 'month', calOpen: false };
+const ui = { tab: 'list', ym: currentYM(), reportSel: null, reportAccs: new Set(), persisted: null, day: todayStr(), range: 'month', calOpen: false };
 
 // 換月份後的狀態：本月就選今天，其他月份選 1 號；清單回到看整月
 function monthState(delta) {
@@ -272,10 +272,10 @@ function rangeStats(byDay) {
   </div>`;
 }
 
-function summaryCard(txs) {
+function summaryCard(txs, label = `${ui.ym.m} 月支出`) {
   const total = sumAmt(txs);
   return `<div class="card month-sum">
-    <div class="lbl">${ui.ym.m} 月支出</div>
+    <div class="lbl">${esc(label)}</div>
     <div class="month-total">$${fmt(total)}</div>
     <div class="month-meta">共 ${txs.length} 筆 · 日平均 $${fmt(Math.round(total / daysForAvg()))}</div>
   </div>`;
@@ -373,10 +373,25 @@ function donutSvg(slices, total, selId) {
 
 const pct = (v, total) => (total ? Math.round((v / total) * 1000) / 10 : 0) + '%';
 
+// 報表的帳戶篩選：可多選，沒選任何一個就是「全部」
+function accFilterBar() {
+  for (const id of ui.reportAccs) if (!findAcc(id)) ui.reportAccs.delete(id); // 帳戶被刪掉了
+  const all = ui.reportAccs.size === 0;
+  return `<div class="acc-filter" role="group" aria-label="選擇帳戶">
+    <button class="chip${all ? ' on' : ''}" data-action="report-acc" data-id="" aria-pressed="${all}">全部</button>
+    ${data.accounts.map((a) => {
+      const on = ui.reportAccs.has(a.id);
+      return `<button class="chip${on ? ' on' : ''}" data-action="report-acc" data-id="${esc(a.id)}" aria-pressed="${on}">${on ? '✓ ' : ''}${esc(a.icon)} ${esc(a.name)}</button>`;
+    }).join('')}
+  </div>`;
+}
+
 function viewReport() {
-  const txs = monthTxs();
+  const accs = ui.reportAccs;
+  const txs = accs.size ? monthTxs().filter((t) => accs.has(t.accountId)) : monthTxs();
   const type = 'expense';
-  let html = monthBar() + summaryCard(txs);
+  const label = accs.size ? `${ui.ym.m} 月支出 · ${data.accounts.filter((a) => accs.has(a.id)).map((a) => a.name).join('、')}` : undefined;
+  let html = monthBar() + accFilterBar() + summaryCard(txs, label);
 
   const sums = new Map();
   for (const t of txs) sums.set(t.categoryId, (sums.get(t.categoryId) || 0) + t.amount);
@@ -385,7 +400,7 @@ function viewReport() {
     return { id: id ?? '__none', name: c?.name ?? '未分類', icon: c?.icon ?? '❔', value: round2(value) };
   }).sort((a, b) => b.value - a.value);
   if (!rows.length) {
-    return html + `<div class="empty"><div class="big">📊</div>這個月還沒有${TYPE_LABEL[type]}記錄</div>`;
+    return html + `<div class="empty"><div class="big">📊</div>${accs.size ? '選的帳戶這個月沒有支出' : `這個月還沒有${TYPE_LABEL[type]}記錄`}</div>`;
   }
   const total = round2(rows.reduce((s, r) => s + r.value, 0));
 
@@ -423,7 +438,7 @@ function viewReport() {
       }).join('')}
     </div>
   </div>
-  <p class="hint">點主分類可以看它底下各個次分類花了多少。</p>`;
+  <p class="hint">上方可以選一個或多個帳戶，只看那些帳戶的支出比例。點主分類可以看它底下各個次分類花了多少。</p>`;
   return html;
 }
 
@@ -979,6 +994,16 @@ const actions = {
     if (!confirm('確定刪除這筆記錄嗎？')) return;
     data.txs = data.txs.filter((t) => t.id !== entry.id);
     save(); closeLayer(); render(); toast('已刪除');
+  },
+  'report-acc': (el) => {
+    const id = el.dataset.id;
+    if (!id) ui.reportAccs.clear();
+    else if (ui.reportAccs.has(id)) ui.reportAccs.delete(id);
+    else ui.reportAccs.add(id);
+    // 每個帳戶都選了，等於全部
+    if (ui.reportAccs.size && data.accounts.every((a) => ui.reportAccs.has(a.id))) ui.reportAccs.clear();
+    ui.reportSel = null;
+    render();
   },
   'report-sel': (el) => { const id = el.dataset.id; ui.reportSel = ui.reportSel === id ? null : id; render(); },
   'add-account': () => editAccount(null),
