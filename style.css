@@ -399,3 +399,18 @@ button.row:active { background: var(--chip); }
 .export-sum b { color: var(--text); font-size: 21.6px; font-variant-numeric: tabular-nums; }
 .btn-block { display: block; width: 100%; margin: 16px 0 4px; padding: 14px; border-radius: 14px; background: var(--brand); color: #fff; font-weight: 700; }
 .btn-block:active { filter: brightness(.95); }
+
+/* App 內的確認視窗（刪除前會跳出） */
+.confirm-layer { z-index: 40; align-items: center; padding: 16px; animation: fadeIn .15s ease-out; }
+.confirm-layer[hidden] { display: none; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.confirm-card { background: var(--card); width: min(340px, 100%); border-radius: 20px; padding: 22px 20px 16px; text-align: center; box-shadow: 0 20px 50px rgba(0,0,0,.25); animation: popIn .18s ease-out; }
+@keyframes popIn { from { transform: scale(.94); opacity: 0; } to { transform: none; opacity: 1; } }
+.confirm-card h3 { margin: 0 0 8px; font-size: 20.4px; }
+.confirm-card p { margin: 0 0 18px; color: var(--text2); font-size: 16.8px; line-height: 1.6; }
+.confirm-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.cbtn { padding: 13px 10px; border-radius: 14px; font-weight: 700; background: var(--chip); color: var(--text); }
+.cbtn.danger { background: var(--neg); color: #fff; }
+.cbtn.primary { background: var(--brand); color: #fff; }
+.cbtn:active { filter: brightness(.94); }
+@media (hover: hover) { .cbtn:hover { filter: brightness(.96); } .cbtn.danger:hover, .cbtn.primary:hover { filter: brightness(1.06); } }

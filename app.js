@@ -12,7 +12,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 const STORE_KEY = 'xiaozhangben:v1'; // 舊版（1.x）存在手機裡的資料
-const APP_VERSION = '2.2.2';
+const APP_VERSION = '2.2.3';
 // 1.2.0 起支出分類分成「主分類 + 次分類」，資料格式 version 2（舊資料自動轉換）。
 // 1.1.0 起只記支出。舊版的收入／轉帳記錄仍保留在資料與備份檔中，只是不顯示。
 
@@ -968,11 +968,16 @@ function openLayer(name) {
   document.body.classList.add('locked');
   if (layers[layers.length - 1] !== name) {
     layers.push(name);
-    history.pushState({ layer: name }, '');
+    history.pushState({ layer: name, depth: layers.length }, '');
   }
 }
 function closeLayer() {
   if (layers.length) history.back();
+}
+// 一次關掉好幾層（例如確認視窗＋後面的編輯畫面）
+function closeLayers(n) {
+  n = Math.min(n, layers.length);
+  if (n > 0) history.go(-n);
 }
 function hideLayer(name) {
   const el = $('#' + name);
@@ -980,12 +985,34 @@ function hideLayer(name) {
   el.innerHTML = '';
   if (name === 'sheet') { entry = null; catMgr = null; }
   if (name === 'modal') form = null;
+  if (name === 'confirm' && confirmCb) { const cb = confirmCb; confirmCb = null; cb(false); } // 按返回鍵／背景＝取消
   if (!layers.length) document.body.classList.remove('locked');
 }
-window.addEventListener('popstate', () => {
-  const name = layers.pop();
-  if (name) hideLayer(name);
+window.addEventListener('popstate', (ev) => {
+  // 回到第幾層：關掉比它上面的所有疊層
+  const keep = ev.state?.depth ?? 0;
+  if (layers.length <= keep) { const name = layers.pop(); if (name) hideLayer(name); return; }
+  while (layers.length > keep) hideLayer(layers.pop());
 });
+
+// ---------- App 內的確認視窗（取代瀏覽器內建的 confirm） ----------
+let confirmCb = null;
+// 按「確定」回傳 true（確認視窗還開著，由呼叫的地方關掉）；按取消、背景、返回鍵回傳 false
+function askConfirm({ title, message = '', ok = '確定', danger = true }) {
+  return new Promise((resolve) => {
+    confirmCb = resolve;
+    $('#confirm').innerHTML = `<div class="confirm-card" role="alertdialog" aria-modal="true" aria-label="${esc(title)}">
+      <h3>${esc(title)}</h3>
+      ${message ? `<p>${esc(message).replace(/\n/g, '<br>')}</p>` : ''}
+      <div class="confirm-btns">
+        <button class="cbtn" data-action="confirm-no">取消</button>
+        <button class="cbtn ${danger ? 'danger' : 'primary'}" data-action="confirm-yes">${esc(ok)}</button>
+      </div>
+    </div>`;
+    openLayer('confirm');
+    setTimeout(() => $('#confirm .cbtn.danger, #confirm .cbtn.primary')?.focus(), 50);
+  });
+}
 
 // ---------- 記一筆 ----------
 let entry = null;
@@ -1436,11 +1463,21 @@ const actions = {
     document.querySelectorAll('#subRow .chip').forEach((b) => b.classList.toggle('on', b.dataset.id === entry.subCategoryId));
   },
   'key': (el) => pressKey(el.dataset.k),
-  'delete-tx': () => {
-    if (!confirm('確定刪除這筆記錄嗎？')) return;
-    data.txs = data.txs.filter((t) => t.id !== entry.id);
-    save(); closeLayer(); render(); toast('已刪除');
+  'delete-tx': async () => {
+    const id = entry?.id;
+    const t = data.txs.find((x) => x.id === id);
+    if (!t) return;
+    const c = findCat('expense', t.categoryId);
+    const name = findSub(c, t.subCategoryId)?.name || c?.name || '這筆記錄';
+    const ok = await askConfirm({ title: '確定刪除這筆記錄嗎？', message: `${md(t.date)}　${name}　$${fmt(t.amount)}\n刪除後無法復原。`, ok: '刪除' });
+    if (!ok) return;
+    data.txs = data.txs.filter((x) => x.id !== id);
+    save();
+    closeLayers(2); // 關掉確認視窗和編輯畫面
+    render(); toast('已刪除');
   },
+  'confirm-yes': () => { const cb = confirmCb; confirmCb = null; if (cb) cb(true); },
+  'confirm-no': () => closeLayer(),
   'trend-month': (el) => {
     const y = Number(el.dataset.y), m = Number(el.dataset.m);
     Object.assign(ui, monthState((y - ui.ym.y) * 12 + (m - ui.ym.m)));
@@ -1586,7 +1623,7 @@ const actions = {
 };
 
 document.addEventListener('click', (ev) => {
-  if (ev.target.id === 'modal') { closeLayer(); return; } // 點背景關閉表單
+  if (ev.target.id === 'modal' || ev.target.id === 'confirm') { closeLayer(); return; } // 點背景關閉
   const el = ev.target.closest('[data-action]');
   if (!el) return;
   const fn = actions[el.dataset.action];
