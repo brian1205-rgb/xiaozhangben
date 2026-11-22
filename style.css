@@ -475,3 +475,52 @@ button.row:active { background: var(--chip); }
 .f-row select:focus { border-color: var(--brand); }
 .f-note { margin: -4px 4px 14px; }
 .search-open span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 匯入 Excel（預覽表格） */
+.side-import { display: none; }
+.text-btn[disabled], .btn-block[disabled] { opacity: .4; cursor: default; }
+.imp-sum { display: flex; flex-direction: column; gap: 4px; font-size: 15.6px; }
+.imp-sum b { font-size: 19.2px; }
+.imp-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 10px 0 4px; }
+.imp-tools .sf { flex: 1 1 100%; }
+.imp-tools .sf select { flex: 1; min-width: 0; }
+.imp-msg { font-size: 15px; line-height: 1.5; margin: 8px 2px 0; padding: 8px 12px; border-radius: 10px; background: #fff6e0; color: #8a5a00; }
+.imp-msg.bad { background: #fdeaea; color: var(--neg); }
+.imp-cols { display: none; }
+.imp-list { margin-top: 10px; background: var(--card); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
+.imp-row {
+  display: grid; grid-template-columns: 30px minmax(0, 1.3fr) minmax(0, 1fr) auto; gap: 6px 8px; align-items: center;
+  grid-template-areas: "chk note note amt" "chk date date date" "chk cat acc acc" "chk tip tip tip";
+  padding: 10px 12px; font-size: 16.8px;
+}
+.imp-row + .imp-row { border-top: 1px solid var(--line); }
+.imp-row.off { background: #fafaf8; }
+.imp-row.off .imp-note, .imp-row.off .imp-amt, .imp-row.off .imp-date { color: var(--muted); }
+.imp-row.bad { background: #fff7f7; }
+.imp-chk { grid-area: chk; align-self: start; padding-top: 2px; display: grid; place-items: center; }
+.imp-chk input { width: 20px; height: 20px; accent-color: var(--brand); }
+.imp-date { grid-area: date; font-size: 14.4px; color: var(--text2); font-variant-numeric: tabular-nums; }
+.imp-note { grid-area: note; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.imp-amt { grid-area: amt; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
+.imp-row select { min-width: 0; width: 100%; padding: 7px 6px; border-radius: 9px; border: 1px solid var(--line); background: #fff; font-size: 15px; color: var(--text); outline: none; text-overflow: ellipsis; }
+.imp-row select:focus { border-color: var(--brand); }
+.imp-row select.need { border-color: var(--neg); color: var(--neg); }
+.imp-cat { grid-area: cat; }
+.imp-acc { grid-area: acc; }
+.imp-tip { grid-area: tip; display: flex; flex-direction: column; gap: 2px; font-size: 13.8px; color: #8a5a00; line-height: 1.4; }
+.imp-tip b { font-weight: 600; }
+.imp-tip .bad { color: var(--neg); }
+.imp-tip .dup { color: #b06a00; }
+@media (min-width: 960px) {
+  .side-import { display: block; order: 2; margin-top: 10px; text-align: left; padding: 10px 12px; border-radius: 12px; font-size: 16.8px; color: var(--text2); }
+  .side-import:hover { background: var(--chip); }
+  .modal-card.import-card { max-width: 1040px; width: calc(100vw - 300px); max-height: 90vh; }
+  .imp-tools .sf { flex: 1 1 220px; }
+  .imp-cols, .imp-row { grid-template-columns: 30px 108px minmax(0, 1fr) 100px 230px 150px; }
+  .imp-cols { display: grid; gap: 8px; padding: 12px 12px 0; font-size: 14.4px; color: var(--muted); }
+  .imp-cols span:nth-child(4) { text-align: right; }
+  .imp-row { grid-template-areas: "chk date note amt cat acc" ". tip tip tip tip tip"; padding: 8px 12px; }
+  .imp-chk { align-self: center; padding-top: 0; }
+  .imp-date { font-size: 15.6px; }
+  .imp-note { font-weight: 500; }
+}

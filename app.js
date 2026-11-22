@@ -12,7 +12,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 const STORE_KEY = 'xiaozhangben:v1'; // 舊版（1.x）存在手機裡的資料
-const APP_VERSION = '2.3.2';
+const APP_VERSION = '2.4.0';
 // 1.2.0 起支出分類分成「主分類 + 次分類」，資料格式 version 2（舊資料自動轉換）。
 // 1.1.0 起只記支出。舊版的收入／轉帳記錄仍保留在資料與備份檔中，只是不顯示。
 
@@ -1141,6 +1141,14 @@ function viewSettings() {
     </div>
     <p class="hint">想先看看有資料時的樣子，可以加入一些假的支出記錄。範例資料可以一鍵移除，不會動到你自己記的帳。</p>
     </section>`}
+    <section class="group"><h2>匯入 Excel（批次新增）</h2><div class="rows">
+      <button class="row" data-action="import-excel"><span>上傳 Excel 檔</span><span class="row-val">.xlsx / .csv ›</span></button>
+      <button class="row" data-action="excel-template"><span>下載 Excel 範本</span><span class="row-val">含分類清單 ›</span></button>
+      ${importBatches().map((b) => `<div class="row member-row"><span class="tx-main"><span>${esc(new Date(b.at).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' }))} 匯入 ${b.n} 筆 · $${fmt(b.sum)}</span><span class="tx-sub">記錄日期 ${esc(md(b.from))}${b.to !== b.from ? ` ～ ${esc(md(b.to))}` : ''}</span></span>
+        <button class="text-btn danger" data-action="import-undo" data-id="${esc(b.id)}">刪除這批</button></div>`).join('')}
+    </div>
+    <p class="hint">Excel 第一列是欄位名稱：日期、金額、主分類、次分類、付款方式、備註。上傳後會先預覽，可以修改分類和付款方式，確認後才會存進目前這本帳本。匯錯了可以在這裡整批刪掉。</p>
+    </section>
     <section class="group"><h2>資料備份（目前這本帳本）</h2><div class="rows">
       <button class="row" data-action="export-json"><span>匯出備份檔</span><span class="row-val">.json ›</span></button>
       ${fam && !isOwner() ? '' : `<button class="row" data-action="import-json"><span>從備份檔還原</span><span class="row-val">›</span></button>`}
@@ -1242,7 +1250,7 @@ function hideLayer(name) {
   el.hidden = true;
   el.innerHTML = '';
   if (name === 'sheet') { entry = null; catMgr = null; }
-  if (name === 'modal') form = null;
+  if (name === 'modal') { form = null; imp = null; }
   if (name === 'confirm' && confirmCb) { const cb = confirmCb; confirmCb = null; cb(false); } // 按返回鍵／背景＝取消
   if (!layers.length) document.body.classList.remove('locked');
 }
@@ -1689,6 +1697,289 @@ function doMonthExport() {
   closeLayer();
 }
 
+// ---------- 匯入 Excel（批次新增，例如 AI 整理好的信用卡帳單） ----------
+// Excel 欄位：日期、金額、主分類、次分類、付款方式、備註（第一列是欄位名稱；小帳本匯出的 CSV 也能直接匯回來）
+// 讀 Excel 用 SheetJS，第一次用到才從官方 CDN 載入
+const XLSX_URL = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs';
+let xlsxLib = null;
+async function loadXLSX() {
+  if (!xlsxLib) xlsxLib = await import(XLSX_URL);
+  return xlsxLib;
+}
+const IMPORT_COLS = {
+  date: ['日期', '消費日', '消費日期', '交易日期', '交易日'],
+  amount: ['金額', '消費金額', '台幣金額', '新台幣金額', '新臺幣金額'],
+  sub: ['次分類', '子分類', '細項'],
+  cat: ['主分類', '分類', '類別'],
+  acc: ['付款方式', '帳戶', '付款'],
+  note: ['備註', '說明', '摘要', '消費明細', '商店', '商店名稱', '項目'],
+};
+let imp = null; // 匯入預覽中的資料 { rows, fileName }
+
+const validYMD = (y, m, d) => {
+  const dt = new Date(y, m - 1, d);
+  return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d ? `${y}-${pad(m)}-${pad(d)}` : null;
+};
+// 日期：Excel 日期、2026/11/3、2026-11-03、20261103、民國 115/11/03、只有 11/3（猜年份）
+function parseImportDate(v, X) {
+  if (typeof v === 'number') {
+    if (v > 19000000 && v < 21000000) return validYMD(Math.floor(v / 10000), Math.floor(v / 100) % 100, v % 100);
+    const p = v > 20000 && v < 80000 ? X.SSF.parse_date_code(v) : null;
+    return p ? validYMD(p.y, p.m, p.d) : null;
+  }
+  const s = String(v ?? '').trim().replace(/[年月]/g, '/').replace(/日/g, '').replace(/[.\-]/g, '/').split(/\s+/)[0];
+  let m = s.match(/^(\d{8})$/);
+  if (m) return validYMD(+s.slice(0, 4), +s.slice(4, 6), +s.slice(6, 8));
+  m = s.match(/^(\d{2,4})\/(\d{1,2})\/(\d{1,2})$/);
+  if (m) { let y = +m[1]; if (y < 100) y += 2000; else if (y < 1911) y += 1911; return validYMD(y, +m[2], +m[3]); }
+  m = s.match(/^(\d{1,2})\/(\d{1,2})$/);
+  if (m) { const now = currentYM(); const y = +m[1] > now.m ? now.y - 1 : now.y; return validYMD(y, +m[1], +m[2]); }
+  return null;
+}
+const parseImportAmount = (v) => round2(typeof v === 'number' ? v : Number(String(v ?? '').replace(/NT\$?|[,\s$元＄]/gi, '')));
+
+// 依名稱找分類（主分類欄也可以寫「飲食 › 早餐」）
+function resolveCat(mainName, subName) {
+  const mn = String(mainName ?? '').trim(), sn = String(subName ?? '').trim();
+  const cats = data.categories.expense;
+  let c = mn ? cats.find((x) => x.name === mn) : null;
+  if (!c && mn && !sn) {
+    const parts = mn.split(/\s*[›>/／]\s*/);
+    if (parts.length === 2) return resolveCat(parts[0], parts[1]);
+  }
+  if (!c && !mn && sn) { const hits = cats.filter((x) => x.subs.some((s) => s.name === sn)); if (hits.length === 1) c = hits[0]; }
+  if (!c) return { val: '', err: mn ? `找不到主分類「${mn}」，請選擇分類` : '沒有填主分類，請選擇分類' };
+  if (!sn) return { val: c.id };
+  const s = c.subs.find((x) => x.name === sn);
+  if (!s) return { val: c.id, warn: `「${c.name}」沒有次分類「${sn}」，先不選次分類` };
+  return { val: `${c.id}|${s.id}` };
+}
+function resolveAcc(name, defId) {
+  const n = String(name ?? '').trim();
+  if (!n) return { id: defId };
+  const exact = data.accounts.find((a) => a.name === n);
+  if (exact) return { id: exact.id };
+  const near = data.accounts.filter((a) => a.name && (n.includes(a.name) || a.name.includes(n)));
+  if (near.length === 1) return { id: near[0].id };
+  return { id: defId, warn: `找不到付款方式「${n}」，先用「${accName(defId)}」` };
+}
+const defaultImportAcc = () => (data.accounts.find((a) => a.name.includes('信用卡')) || findAcc(data.prefs.lastAccountId) || data.accounts[0])?.id || '';
+const rowOk = (r) => !!(r.date && r.amount > 0 && r.catVal && findAcc(r.accId));
+
+async function readImportFile(file) {
+  const X = await loadXLSX();
+  const buf = await file.arrayBuffer();
+  let wb;
+  if (/\.(csv|txt)$/i.test(file.name)) {
+    // CSV 可能是 UTF-8 或 Big5（銀行網站常見）
+    let text;
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch { text = new TextDecoder('big5').decode(buf); }
+    wb = X.read(text.replace(/^﻿/, ''), { type: 'string', raw: true });
+  } else {
+    wb = X.read(buf, { type: 'array' });
+  }
+  const key = (v) => String(v ?? '').replace(/\s/g, '');
+  for (const name of wb.SheetNames) {
+    const aoa = X.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: '' });
+    for (let h = 0; h < Math.min(aoa.length, 15); h++) {
+      const head = aoa[h].map(key);
+      const col = {};
+      for (const [f, names] of Object.entries(IMPORT_COLS)) { const i = head.findIndex((c, j) => names.includes(c) && !Object.values(col).includes(j)); if (i >= 0) col[f] = i; }
+      for (const [f, names] of Object.entries(IMPORT_COLS)) {
+        if (col[f] != null) continue;
+        const i = head.findIndex((c, j) => c && names.some((n) => c.includes(n)) && !Object.values(col).includes(j));
+        if (i >= 0) col[f] = i;
+      }
+      if (col.date == null || col.amount == null) continue;
+      return { X, col, rows: aoa.slice(h + 1) };
+    }
+  }
+  return null;
+}
+
+async function startImport(file) {
+  if (!data.accounts.length) { notice('還沒有付款方式', '請先到「付款」新增付款方式，再匯入。'); return; }
+  let got;
+  try { got = await readImportFile(file); } catch (e) {
+    console.error(e);
+    notice('無法讀取這個檔案', navigator.onLine ? '請確認是 Excel（.xlsx）或 CSV 檔。' : '第一次匯入需要網路（要下載讀取 Excel 的程式），請連上網路再試一次。');
+    return;
+  }
+  if (!got) { notice('找不到欄位名稱', '第一列要有欄位名稱，至少要有「日期」和「金額」。\n建議的欄位：日期、金額、主分類、次分類、付款方式、備註。\n可以在「設定」下載 Excel 範本。'); return; }
+  const { X, col, rows: raw } = got;
+  const cell = (r, f) => (col[f] == null ? '' : r[col[f]]);
+  const defAcc = defaultImportAcc();
+  const have = new Set(data.txs.filter((t) => t.type === 'expense').map((t) => `${t.date}|${round2(t.amount)}`));
+  const rows = [];
+  for (const r of raw) {
+    if (!r.some((v) => String(v ?? '').trim() !== '')) continue;
+    const first = String(r.find((v) => String(v ?? '').trim() !== '') ?? '').trim();
+    if (/^(合計|總計|小計)/.test(first)) continue;
+    if (rows.length >= 2000) break;
+    const date = parseImportDate(cell(r, 'date'), X);
+    const amount = parseImportAmount(cell(r, 'amount'));
+    const cat = resolveCat(cell(r, 'cat'), cell(r, 'sub'));
+    const acc = resolveAcc(cell(r, 'acc'), defAcc);
+    const errs = [];
+    if (!date) errs.push(`日期看不懂「${String(cell(r, 'date') ?? '')}」`);
+    if (!(amount > 0)) errs.push(amount < 0 ? '金額是負的（退款？）預設不匯入，要記請自己在 App 處理' : `金額看不懂「${String(cell(r, 'amount') ?? '')}」`);
+    const row = {
+      i: rows.length, date, amount, note: String(cell(r, 'note') ?? '').trim().slice(0, 100),
+      catVal: cat.val, accId: acc.id, errs, catErr: cat.err || '', warns: [cat.warn, acc.warn].filter(Boolean),
+      dup: !!date && amount > 0 && have.has(`${date}|${amount}`),
+    };
+    row.on = rowOk(row) && !row.dup && !errs.length;
+    rows.push(row);
+  }
+  if (!rows.length) { notice('檔案裡沒有資料', '找到欄位名稱了，但下面沒有任何一筆記錄。'); return; }
+  imp = { rows, fileName: file.name };
+  renderImport();
+  openLayer('modal');
+}
+
+function impRowHtml(r) {
+  const ok = rowOk(r) && !r.errs.length;
+  const opt = (list, v) => list.map((o) => `<option value="${esc(o.value)}"${o.value === v ? ' selected' : ''}>${esc(o.label)}</option>`).join('');
+  const tips = [
+    ...r.errs.map((m) => `<b class="bad">✕ ${esc(m)}</b>`),
+    r.catErr ? `<b class="bad">✕ ${esc(r.catErr)}</b>` : '',
+    r.dup ? '<b class="dup">⚠ 可能重複：帳本裡已有同一天、同金額的記錄</b>' : '',
+    ...r.warns.map((m) => `<span>⚠ ${esc(m)}</span>`),
+  ].filter(Boolean).join('');
+  return `<div class="imp-row${ok ? '' : ' bad'}${r.on ? '' : ' off'}">
+    <label class="imp-chk"><input type="checkbox" data-imp="on" data-i="${r.i}"${r.on ? ' checked' : ''}${ok ? '' : ' disabled'} aria-label="匯入這筆"></label>
+    <span class="imp-date">${r.date ? esc(r.date.replace(/-/g, '/')) : '日期？'}</span>
+    <span class="imp-note">${esc(r.note || '（沒有備註）')}</span>
+    <span class="imp-amt">${r.amount > 0 ? '$' + fmt(r.amount) : esc(String(r.amount || '金額？'))}</span>
+    <select class="imp-cat${r.catVal ? '' : ' need'}" data-imp="cat" data-i="${r.i}" aria-label="分類">${r.catVal ? '' : '<option value="" selected>請選擇分類</option>'}${opt(catOptions(), r.catVal)}</select>
+    <select class="imp-acc" data-imp="acc" data-i="${r.i}" aria-label="付款方式">${opt(accOpts(), r.accId)}</select>
+    ${tips ? `<span class="imp-tip">${tips}</span>` : ''}
+  </div>`;
+}
+
+function renderImport() {
+  const rows = imp.rows;
+  const sel = rows.filter((r) => r.on);
+  const nBad = rows.filter((r) => !rowOk(r) || r.errs.length).length;
+  const nDup = rows.filter((r) => r.dup).length;
+  const where = activeLedger() ? ledgerLabel(activeLedger()) : '目前的帳本';
+  const card = $('#modal .import-card');
+  const sc = card ? card.scrollTop : 0;
+  $('#modal').innerHTML = `<div class="modal-card import-card" role="dialog" aria-modal="true" aria-label="匯入 Excel">
+    <div class="modal-head">
+      <button class="text-btn" data-action="close-layer">取消</button>
+      <h3>匯入 Excel</h3>
+      <button class="text-btn" data-action="import-do"${sel.length ? '' : ' disabled'}>匯入</button>
+    </div>
+    <div class="form-body">
+      <div class="export-sum imp-sum">
+        <div>${esc(imp.fileName)} · 共 ${rows.length} 筆</div>
+        <div>勾選 <b>${sel.length}</b> 筆，合計 <b>$${fmt(sumAmt(sel))}</b>，匯入到 ${esc(where)}</div>
+      </div>
+      <div class="imp-tools">
+        <label class="sf"><span>付款方式全部改成</span><select id="impAllAcc"><option value="">選擇…</option>${accOpts().map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('')}</select></label>
+        <button class="text-btn" data-action="import-all" data-on="1">全選</button>
+        <button class="text-btn" data-action="import-all" data-on="">全不選</button>
+      </div>
+      ${nBad ? `<p class="imp-msg bad">有 ${nBad} 筆需要處理（紅色）：分類可以直接在下面選；日期或金額有問題的請改 Excel 再上傳。</p>` : ''}
+      ${nDup ? `<p class="imp-msg">有 ${nDup} 筆跟帳本裡同一天、同金額的記錄一樣，可能已經記過，預設不匯入；確定要匯入請自己勾選。</p>` : ''}
+      <div class="imp-cols"><span></span><span>日期</span><span>備註</span><span>金額</span><span>分類</span><span>付款方式</span></div>
+      <div class="imp-list">${rows.map(impRowHtml).join('')}</div>
+      <button class="btn-block" data-action="import-do"${sel.length ? '' : ' disabled'}>匯入 ${sel.length} 筆到 ${esc(where)}</button>
+    </div>
+  </div>`;
+  const nc = $('#modal .import-card');
+  if (nc && sc) nc.scrollTop = sc;
+}
+
+$('#modal').addEventListener('change', (ev) => {
+  if (!imp) return;
+  const t = ev.target;
+  if (t.id === 'impAllAcc') {
+    if (!findAcc(t.value)) return;
+    for (const r of imp.rows) { r.accId = t.value; r.warns = r.warns.filter((m) => !m.startsWith('找不到付款方式')); }
+    renderImport(); toast(`付款方式都改成「${accName(t.value)}」`); return;
+  }
+  const r = imp.rows[Number(t.dataset.i)];
+  if (!r || !t.dataset.imp) return;
+  if (t.dataset.imp === 'on') r.on = t.checked && rowOk(r) && !r.errs.length;
+  if (t.dataset.imp === 'cat') {
+    const wasOk = rowOk(r);
+    r.catVal = t.value; r.catErr = ''; r.warns = r.warns.filter((m) => !m.includes('次分類'));
+    if (!wasOk && rowOk(r) && !r.errs.length && !r.dup) r.on = true;
+  }
+  if (t.dataset.imp === 'acc') { r.accId = t.value; r.warns = r.warns.filter((m) => !m.startsWith('找不到付款方式')); }
+  renderImport();
+});
+
+function doImport() {
+  const rows = imp.rows.filter((r) => r.on && rowOk(r) && !r.errs.length);
+  if (!rows.length) { toast('沒有勾選要匯入的記錄'); return; }
+  const importId = 'imp_' + uid();
+  const now = Date.now();
+  rows.forEach((r, k) => {
+    const { categoryId, subCategoryId } = splitCat(r.catVal);
+    data.txs.push({
+      id: uid() + k, type: 'expense', amount: r.amount, categoryId, subCategoryId, accountId: r.accId, toAccountId: null,
+      date: r.date, note: r.note, createdAt: now + k, updatedAt: now + k, by: cloud.user.uid, byName: myName(), importId,
+    });
+  });
+  const sum = sumAmt(rows);
+  save();
+  closeLayer();
+  render();
+  toast(`已匯入 ${rows.length} 筆，共 $${fmt(sum)}`);
+}
+
+// 最近幾次匯入（可以整批刪掉）
+function importBatches() {
+  const m = new Map();
+  for (const t of data.txs) {
+    if (!t.importId) continue;
+    const b = m.get(t.importId) || { id: t.importId, n: 0, sum: 0, at: t.createdAt || 0, from: t.date, to: t.date };
+    b.n++; b.sum += t.amount; b.at = Math.min(b.at, t.createdAt || b.at);
+    if (t.date < b.from) b.from = t.date;
+    if (t.date > b.to) b.to = t.date;
+    m.set(t.importId, b);
+  }
+  return [...m.values()].sort((a, b) => b.at - a.at).slice(0, 5);
+}
+
+// Excel 範本：「明細」工作表只有欄位名稱，另外附上分類清單和付款方式
+async function downloadTemplate() {
+  let X;
+  try { X = await loadXLSX(); } catch { notice('下載失敗', '需要網路才能產生 Excel 範本，請連上網路再試一次。'); return; }
+  const wb = X.utils.book_new();
+  const main = X.utils.aoa_to_sheet([['日期', '金額', '主分類', '次分類', '付款方式', '備註']]);
+  main['!cols'] = [{ wch: 12 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 30 }];
+  X.utils.book_append_sheet(wb, main, '明細');
+  const cats = [['主分類', '次分類']];
+  for (const c of data.categories.expense) { if (!c.subs.length) cats.push([c.name, '']); for (const s of c.subs) cats.push([c.name, s.name]); }
+  const cs = X.utils.aoa_to_sheet(cats); cs['!cols'] = [{ wch: 12 }, { wch: 14 }];
+  X.utils.book_append_sheet(wb, cs, '分類清單');
+  const as = X.utils.aoa_to_sheet([['付款方式'], ...data.accounts.map((a) => [a.name])]); as['!cols'] = [{ wch: 14 }];
+  X.utils.book_append_sheet(wb, as, '付款方式');
+  const help = X.utils.aoa_to_sheet([
+    ['小帳本 Excel 匯入說明'], [''],
+    ['1. 在「明細」工作表一列填一筆支出，第一列的欄位名稱不要改。'],
+    ['2. 日期：2026/11/03、2026-11-03 或民國 115/11/03 都可以。'],
+    ['3. 金額：正數，不用加 $ 或逗號也可以。'],
+    ['4. 主分類、次分類：請用「分類清單」工作表裡的名稱；次分類可以空白。'],
+    ['5. 付款方式：請用「付款方式」工作表裡的名稱；空白的話匯入時可以一次指定。'],
+    ['6. 在小帳本「設定」→「匯入 Excel」上傳，預覽確認後才會存進帳本。'],
+  ]);
+  help['!cols'] = [{ wch: 70 }];
+  X.utils.book_append_sheet(wb, help, '說明');
+  const out = X.write(wb, { type: 'array', bookType: 'xlsx' });
+  shareOrDownload(`小帳本-匯入範本-${ledgerFileName()}.xlsx`, out, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+}
+
+$('#excelFile').addEventListener('change', (ev) => {
+  const file = ev.target.files[0];
+  ev.target.value = '';
+  if (file) startImport(file);
+});
+
 $('#importFile').addEventListener('change', async (ev) => {
   const file = ev.target.files[0];
   ev.target.value = '';
@@ -1948,6 +2239,23 @@ const actions = {
   },
   'export-json': () => exportJSON(),
   'import-json': () => $('#importFile').click(),
+  // 匯入 Excel
+  'import-excel': () => $('#excelFile').click(),
+  'excel-template': () => downloadTemplate(),
+  'import-do': () => doImport(),
+  'import-all': (el) => {
+    if (!imp) return;
+    for (const r of imp.rows) r.on = !!el.dataset.on && rowOk(r) && !r.errs.length;
+    renderImport();
+  },
+  'import-undo': async (el) => {
+    const b = importBatches().find((x) => x.id === el.dataset.id);
+    if (!b) return;
+    if (!(await askConfirm({ title: '刪除這批匯入？', message: `會刪除這次匯入的 ${b.n} 筆記錄（共 $${fmt(b.sum)}），之後自己修改過的也會一起刪掉，而且無法復原。`, ok: '刪除這批' }))) return;
+    closeLayer();
+    data.txs = data.txs.filter((t) => t.importId !== b.id);
+    save(); render(); toast(`已刪除 ${b.n} 筆匯入的記錄`);
+  },
   'export-csv': () => exportCSV(),
   'month-export': () => openMonthExport(),
   'do-month-export': () => doMonthExport(),
@@ -1960,6 +2268,7 @@ const actions = {
 };
 
 document.addEventListener('click', (ev) => {
+  if (ev.target.id === 'modal' && imp) return; // 匯入預覽不要因為點到背景就整個關掉
   if (ev.target.id === 'modal' || ev.target.id === 'confirm') { closeLayer(); return; } // 點背景關閉
   const el = ev.target.closest('[data-action]');
   if (!el) return;

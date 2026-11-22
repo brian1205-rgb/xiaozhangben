@@ -5,7 +5,7 @@
 
 - 網站：https://brian1205-rgb.github.io/xiaozhangben/
 - 存放區：https://github.com/brian1205-rgb/xiaozhangben（Public，`main` 分支根目錄就是網站）
-- 目前版本：**2.3.2**（`app.js` 的 `APP_VERSION`）
+- 目前版本：**2.4.0**（`app.js` 的 `APP_VERSION`）
 
 ## 多台電腦開發（重要）
 使用者會在不同電腦開發，GitHub 是唯一的正本：
@@ -31,7 +31,7 @@
 index.html            頁面骨架、底部選單
 app.js                全部程式（ES module，無框架、無打包；從 gstatic CDN 載入 Firebase 10.14.1）
 style.css             樣式（固定淺色）
-sw.js                 Service Worker：network-first 離線快取，抓檔用 cache:no-cache（GitHub Pages 有 max-age=600，不這樣手機會用 10 分鐘內的舊檔）。改了檔案要把 CACHE 版本 +1（目前 xiaozhangben-v23）；gstatic 的 Firebase 檔案和 Google 字型用 cache-first
+sw.js                 Service Worker：network-first 離線快取，抓檔用 cache:no-cache（GitHub Pages 有 max-age=600，不這樣手機會用 10 分鐘內的舊檔）。改了檔案要把 CACHE 版本 +1（目前 xiaozhangben-v24）；gstatic 的 Firebase 檔案和 Google 字型用 cache-first
 manifest.webmanifest  PWA 設定
 icon-192.png / icon-512.png / apple-touch-icon.png   App 圖示（手繪暖色風）
 _config.yml           GitHub Pages 設定：排除 CLAUDE.md；_ 開頭資料夾本來就不會發佈
@@ -69,13 +69,20 @@ _dev/tools/           開發工具（不會出現在網站上）
 - `demo: true` 的是範例資料（設定頁可一鍵加入／移除，不影響真實記錄）。
 - **改資料格式一定要寫轉換程式並測舊資料**；匯入備份也會經過 `normalize()`。
 
-## 功能現況（2.3.2）
+## 功能現況（2.4.0）
 - 首頁：月份切換、**這星期日曆**（有記錄的日子有圓點，可展開整月；左右滑動時日曆跟著手指移動，放開後平滑換週/月）、**今日／本週／本月**三格（點了切換清單範圍）、依日期分組的明細（每筆第二行是彩色小標籤：主分類灰、付款方式藍、記錄者橘；備註在第三行）。選了某天按＋會預設記在那天。
 - 2.3.0 新增（帳本文件多了 `budget`、`recurring[]`、`shortcuts[]`，見 `normExtras()`；`META_KEYS` 決定哪些帳本欄位會同步）：
   - 搜尋與篩選：明細頁「搜尋明細」→ 搜備註／主分類／次分類，篩日期區間、付款方式、記錄者（家用）；顯示筆數和合計（`ui.search`、`viewSearch()`，打字只更新 `#searchResults`）。
   - 每月預算：設定頁填整本帳本的月預算，首頁統計下方顯示已花／還剩／進度條（80% 橘、超支紅），家用共用。
   - 固定支出：設定頁新增（名稱、金額、每月幾號、分類、付款方式）；到期且本月未處理時首頁出現提醒，「記一筆」帶入內容（存檔後 `lastDone` = 本月）、「這個月略過」。
   - 常用捷徑：記一筆上方一排捷徑（帶入分類、付款方式、可選預設金額），「＋ 存成捷徑」或設定頁管理。
+- 2.4.0 匯入 Excel（批次新增，用途：AI 先把信用卡帳單整理成 Excel，使用者修改後上傳）：
+  - 入口：設定頁「匯入 Excel」、電腦版左邊選單「📥 匯入 Excel」（`#excelFile`）。讀檔用 SheetJS 0.20.3，第一次用到才從 `cdn.sheetjs.com` 動態 import（需要網路）。
+  - 欄位（第一列欄位名稱，順序不拘，`IMPORT_COLS` 有別名）：日期、金額、主分類、次分類、付款方式、備註。小帳本自己匯出的 CSV 可直接匯回；CSV 先試 UTF-8 再試 Big5；「合計」列略過。
+  - 日期可為 Excel 日期、2026/11/3、2026-11-03、20261103、民國 115/11/03、只有月/日（猜年份）。分類依名稱對應（主分類欄也可寫「飲食 › 早餐」）；付款方式依名稱，空白用預設（名稱含「信用卡」的優先）。
+  - 預覽（`#modal` 的 `.import-card`，`imp` 狀態、`renderImport()`）：找不到分類標紅可直接選；負數金額、日期錯誤不能匯入；同日期同金額標「可能重複」預設不勾；可一次改全部付款方式、全選／全不選。點背景不會關閉。
+  - 匯入的記錄多一個 `importId`（同一次匯入相同）；設定頁列出最近 5 批，可「刪除這批」。也可下載 Excel 範本（明細＋分類清單＋付款方式＋說明）。
+  - 下一階段（尚未做）：給 AI 讀分類的唯讀 API（打算把分類另存一份 Firestore 文件，用私人金鑰網址讀取，不需 Blaze）。
 - 記一筆：計算機鍵盤（可 + −）、主分類格子 → 次分類小按鈕（可不選）、付款方式、日期、備註。所有確認都用 App 內的視窗：askConfirm()（取消／確定）和 notice()（只有「知道了」），index.html 的 #confirm 疊層；不要再用瀏覽器內建的 confirm/alert。
 - 報表：上方可多選帳戶（不選＝全部，只記在當次開啟，不存檔），依選的帳戶算；近 12 個月支出長條圖（虛線＝有記帳月份的平均，點長條切換月份）；主分類圓餅圖（前 5 名＋其他），點主分類展開次分類明細。
 - 付款：每種付款方式本月花多少。
