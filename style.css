@@ -430,16 +430,18 @@ button.row:active { background: var(--chip); }
 .search-open:hover { color: var(--text2); }
 .lay-main > .search-open:first-child { margin-top: 0; }
 /* 搜尋頁 */
-.search-page { max-width: 760px; margin: 0 auto; }
+.search-page { max-width: 760px; margin: 0 auto; overflow-x: clip; }
+.search-top .text-btn { flex: none; }
 .search-top { display: flex; align-items: center; gap: 8px; position: sticky; top: 0; z-index: 3; background: var(--bg); padding: 6px 0; }
-.search-box { flex: 1; display: flex; align-items: center; gap: 8px; background: var(--card); border-radius: 14px; padding: 0 12px; box-shadow: 0 0 0 2px var(--brand-soft); }
+.search-box { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; background: var(--card); border-radius: 14px; padding: 0 12px; box-shadow: 0 0 0 2px var(--brand-soft); }
 .search-box svg { width: 20px; height: 20px; color: var(--muted); flex: none; }
-.search-box input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; padding: 12px 0; font-size: 18px; }
+.search-box input { flex: 1; min-width: 0; width: 100%; border: 0; outline: none; background: transparent; padding: 12px 0; font-size: 18px; }
 .search-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 4px; align-items: center; }
-.sf { display: flex; align-items: center; gap: 6px; background: var(--card); border-radius: 10px; padding: 4px 10px; font-size: 15.6px; color: var(--text2); box-shadow: 0 0 0 1px var(--line); }
+.sf { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; background: var(--card); border-radius: 10px; padding: 4px 10px; font-size: 15.6px; color: var(--text2); box-shadow: 0 0 0 1px var(--line); }
 .sf input, .sf select { border: 0; background: transparent; outline: none; font-size: 16.8px; color: var(--text); padding: 6px 0; max-width: 100%; }
-.sf-date { flex: 1 1 140px; }
-.sf-date input { flex: 1; min-width: 0; }
+.sf-date { flex: 1 1 200px; }
+.sf-date input { flex: 1; min-width: 0; width: 100%; }
+.sf select { min-width: 0; text-overflow: ellipsis; }
 .sf-clear { min-width: 0; font-size: 15.6px; }
 .search-sum { margin: 12px 4px 0; color: var(--text2); }
 .search-sum b { color: var(--text); font-size: 19.2px; font-variant-numeric: tabular-nums; }

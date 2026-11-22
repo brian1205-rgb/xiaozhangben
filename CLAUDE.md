@@ -5,7 +5,7 @@
 
 - 網站：https://brian1205-rgb.github.io/xiaozhangben/
 - 存放區：https://github.com/brian1205-rgb/xiaozhangben（Public，`main` 分支根目錄就是網站）
-- 目前版本：**2.3.1**（`app.js` 的 `APP_VERSION`）
+- 目前版本：**2.3.2**（`app.js` 的 `APP_VERSION`）
 
 ## 多台電腦開發（重要）
 使用者會在不同電腦開發，GitHub 是唯一的正本：
@@ -31,7 +31,7 @@
 index.html            頁面骨架、底部選單
 app.js                全部程式（ES module，無框架、無打包；從 gstatic CDN 載入 Firebase 10.14.1）
 style.css             樣式（固定淺色）
-sw.js                 Service Worker：network-first 離線快取，抓檔用 cache:no-cache（GitHub Pages 有 max-age=600，不這樣手機會用 10 分鐘內的舊檔）。改了檔案要把 CACHE 版本 +1（目前 xiaozhangben-v22）；gstatic 的 Firebase 檔案和 Google 字型用 cache-first
+sw.js                 Service Worker：network-first 離線快取，抓檔用 cache:no-cache（GitHub Pages 有 max-age=600，不這樣手機會用 10 分鐘內的舊檔）。改了檔案要把 CACHE 版本 +1（目前 xiaozhangben-v23）；gstatic 的 Firebase 檔案和 Google 字型用 cache-first
 manifest.webmanifest  PWA 設定
 icon-192.png / icon-512.png / apple-touch-icon.png   App 圖示（手繪暖色風）
 _config.yml           GitHub Pages 設定：排除 CLAUDE.md；_ 開頭資料夾本來就不會發佈
@@ -69,7 +69,7 @@ _dev/tools/           開發工具（不會出現在網站上）
 - `demo: true` 的是範例資料（設定頁可一鍵加入／移除，不影響真實記錄）。
 - **改資料格式一定要寫轉換程式並測舊資料**；匯入備份也會經過 `normalize()`。
 
-## 功能現況（2.3.1）
+## 功能現況（2.3.2）
 - 首頁：月份切換、**這星期日曆**（有記錄的日子有圓點，可展開整月；左右滑動時日曆跟著手指移動，放開後平滑換週/月）、**今日／本週／本月**三格（點了切換清單範圍）、依日期分組的明細（每筆第二行是彩色小標籤：主分類灰、付款方式藍、記錄者橘；備註在第三行）。選了某天按＋會預設記在那天。
 - 2.3.0 新增（帳本文件多了 `budget`、`recurring[]`、`shortcuts[]`，見 `normExtras()`；`META_KEYS` 決定哪些帳本欄位會同步）：
   - 搜尋與篩選：明細頁「搜尋明細」→ 搜備註／主分類／次分類，篩日期區間、付款方式、記錄者（家用）；顯示筆數和合計（`ui.search`、`viewSearch()`，打字只更新 `#searchResults`）。
