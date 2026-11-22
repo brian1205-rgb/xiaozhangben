@@ -12,7 +12,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 const STORE_KEY = 'xiaozhangben:v1'; // 舊版（1.x）存在手機裡的資料
-const APP_VERSION = '2.5.1';
+const APP_VERSION = '2.6.0';
 // 1.2.0 起支出分類分成「主分類 + 次分類」，資料格式 version 2（舊資料自動轉換）。
 // 1.1.0 起只記支出。舊版的收入／轉帳記錄仍保留在資料與備份檔中，只是不顯示。
 
@@ -1263,7 +1263,7 @@ function hideLayer(name) {
   el.hidden = true;
   el.innerHTML = '';
   if (name === 'sheet') { entry = null; catMgr = null; }
-  if (name === 'modal') { form = null; imp = null; }
+  if (name === 'modal') { form = null; imp = null; catText = null; }
   if (name === 'confirm' && confirmCb) { const cb = confirmCb; confirmCb = null; cb(false); } // 按返回鍵／背景＝取消
   if (!layers.length) document.body.classList.remove('locked');
 }
@@ -1551,6 +1551,7 @@ function renderCatManager() {
           ${i > 0 ? `<button class="icon-btn sm" data-action="cat-up" data-id="${esc(c.id)}" aria-label="往上移">↑</button>` : ''}
         </div>`).join('')}</div>
         <p class="hint">點主分類可以管理它的次分類、改名稱或圖示；按 ↑ 調整在記帳畫面的順序。右上角「新增」是新增主分類。</p>
+        <div class="rows cat-text-row"><button class="row" data-action="cat-text"><span>✏️ 用文字一次修改全部分類</span><span class="row-val">›</span></button></div>
       </div>`;
     return;
   }
@@ -1620,6 +1621,154 @@ function editSub(main, sub) {
       save(); renderCatManager(); render(); toast('已刪除');
     } : null,
   });
+}
+
+// ---------- 用文字一次修改全部分類 ----------
+// 一行一個主分類：「飲食：早餐、午餐」。名稱一樣的分類沿用原本的 id，舊記錄都會留著；
+// 次分類換到別的主分類、或主分類改成次分類，記錄也會跟著搬過去。
+let catText = null; // { text, errs, plan }
+
+const CAT_ICONS = {
+  ...Object.fromEntries(DEFAULT_TREE.map(([n, i]) => [n, i])),
+  寵物: '🐶', 保險: '🛡️', 小孩: '👶', 孩子: '👶', 寶寶: '👶', 運動: '🏋️', 美容: '💄', 投資: '📈', 汽車: '🚗', 機車: '🛵', 旅遊: '✈️',
+};
+const catLines = () => data.categories.expense.map((c) => `${c.name}：${c.subs.map((s) => s.name).join('、') || '（沒有次分類）'}`).join('\n');
+
+function parseCatText(text) {
+  const tree = [], errs = [];
+  for (const raw of String(text).split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    const m = line.match(/^([^：:]+)[：:]?(.*)$/);
+    if (!m) { errs.push(`這一行少了主分類：${line}`); continue; }
+    const name = m[1].trim(), subs = [];
+    for (let s of m[2].split(/[、,，/／;；]/)) {
+      s = s.trim();
+      if (!s || /^[（(]?\s*(沒有次分類|無)\s*[）)]?$/.test(s) || subs.includes(s)) continue;
+      if (s.length > 10) errs.push(`次分類「${s}」太長了（最多 10 個字）`);
+      subs.push(s);
+    }
+    if (name.length > 8) errs.push(`主分類「${name}」太長了（最多 8 個字）`);
+    if (tree.some((c) => c.name === name)) errs.push(`主分類「${name}」重複了`);
+    tree.push({ name, subs });
+  }
+  if (!tree.length) errs.push('至少要有一個主分類');
+  return { tree, errs };
+}
+
+// 比對新舊分類，算出新的分類樹、要顯示的變更，以及把舊記錄對到新分類的 remap()
+function planCats(spec) {
+  const old = data.categories.expense;
+  const oldByName = new Map(old.map((c) => [c.name, c]));
+  const newNames = new Set(spec.map((c) => c.name));
+  const ch = { addMain: [], addSub: [], moved: [], delMain: [], delSub: [] };
+  const subMove = new Map();   // 舊次分類 id → 新主分類 id
+  const mainToSub = new Map(); // 舊主分類 id → { main, sub }
+  const usedSub = new Set();
+  const txN = (pred) => data.txs.filter((t) => t.type === 'expense' && pred(t)).length;
+  const rows = spec.map((n) => {
+    const om = oldByName.get(n.name);
+    if (!om) ch.addMain.push(n.name);
+    // 先保留「同一個主分類底下、名稱一樣」的次分類，剩下的才考慮從別處搬過來
+    const keep = n.subs.map((s) => { const os = om?.subs.find((o) => o.name === s); if (os) usedSub.add(os.id); return os; });
+    return { n, keep, main: { id: om?.id ?? uid(), name: n.name, icon: om?.icon ?? CAT_ICONS[n.name] ?? '📦', subs: [] } };
+  });
+  for (const x of rows) {
+    x.main.subs = x.n.subs.map((s, i) => {
+      if (x.keep[i]) return { id: x.keep[i].id, name: s };
+      const cands = old.flatMap((m) => m.subs.filter((o) => o.name === s && !usedSub.has(o.id)).map((o) => ({ m, o })));
+      if (cands.length === 1) {
+        const { m, o } = cands[0];
+        usedSub.add(o.id); subMove.set(o.id, x.main.id);
+        ch.moved.push({ text: `${m.name} › ${s}　→　${x.main.name} › ${s}`, n: txN((t) => t.subCategoryId === o.id) });
+        return { id: o.id, name: s };
+      }
+      const sub = { id: uid(), name: s };
+      const om = oldByName.get(s);
+      if (om && !newNames.has(s) && !mainToSub.has(om.id)) {
+        mainToSub.set(om.id, { main: x.main.id, sub: sub.id });
+        ch.moved.push({ text: `主分類 ${s}　→　${x.main.name} › ${s}`, n: txN((t) => t.categoryId === om.id) });
+      } else ch.addSub.push(`${x.main.name} › ${s}`);
+      return sub;
+    });
+  }
+  const tree = rows.map((x) => x.main);
+  const other = tree.find((c) => c.name === '其他');
+  for (const m of old) {
+    if (newNames.has(m.name)) {
+      for (const s of m.subs) if (!usedSub.has(s.id)) ch.delSub.push({ text: `${m.name} › ${s.name}`, n: txN((t) => t.subCategoryId === s.id) });
+    } else if (!mainToSub.has(m.id)) ch.delMain.push({ text: m.name, n: txN((t) => t.categoryId === m.id) });
+  }
+  const remap = (o) => {
+    if (!o || !o.categoryId) return;
+    if (o.subCategoryId && subMove.has(o.subCategoryId)) { o.categoryId = subMove.get(o.subCategoryId); return; }
+    const conv = mainToSub.get(o.categoryId);
+    if (conv) { o.categoryId = conv.main; o.subCategoryId = conv.sub; return; }
+    const main = tree.find((c) => c.id === o.categoryId);
+    if (!main) {
+      if (other && old.some((c) => c.id === o.categoryId)) o.categoryId = other.id;
+      o.subCategoryId = null;
+      return;
+    }
+    if (o.subCategoryId && !main.subs.some((s) => s.id === o.subCategoryId)) o.subCategoryId = null;
+  };
+  const same = JSON.stringify(tree) === JSON.stringify(old);
+  return { tree, remap, ch, other: !!other, same };
+}
+
+function openCatText() {
+  catText = { text: catLines(), errs: [], plan: null };
+  renderCatText();
+  openLayer('modal');
+}
+
+function renderCatText() {
+  const p = catText.plan;
+  const head = (left, right) => `<div class="modal-head">${left}<h3>用文字修改分類</h3>${right}</div>`;
+  if (!p) {
+    $('#modal').innerHTML = `<div class="modal-card cat-text-card" role="dialog" aria-modal="true" aria-label="用文字修改分類">
+      ${head('<button class="text-btn" data-action="close-layer">取消</button>', '<button class="text-btn" data-action="cat-text-preview">下一步</button>')}
+      <div class="form-body">
+        <p class="hint" style="margin-top:0">一行一個主分類，格式是「主分類：次分類、次分類」。沒有次分類的就只寫主分類。名稱沒改的分類，原本的記錄都會保留。</p>
+        <textarea id="catTextBox" class="copy-box cat-text-box" rows="14" spellcheck="false">${esc(catText.text)}</textarea>
+        ${catText.errs.length ? `<p class="imp-msg bad">${catText.errs.map(esc).join('<br>')}</p>` : ''}
+        <button class="btn-block" data-action="cat-text-preview">下一步：看看會改什麼</button>
+      </div></div>`;
+    return;
+  }
+  const ch = p.ch;
+  const li = (t, n, what) => `<li><span>${esc(t)}</span>${n ? `<small>${n} 筆記錄${what}</small>` : ''}</li>`;
+  const sec = (title, items) => items.length ? `<div class="group"><h2>${title}</h2><ul class="cat-diff">${items.join('')}</ul></div>` : '';
+  const body = p.same ? '<p class="hint">分類沒有任何變更。</p>' : ([
+    sec('新增主分類', ch.addMain.map((t) => li(t))),
+    sec('新增次分類', ch.addSub.map((t) => li(t))),
+    sec('搬移（記錄會跟著搬）', ch.moved.map((x) => li(x.text, x.n, '跟著搬'))),
+    sec('刪除主分類', ch.delMain.map((x) => li(x.text, x.n, p.other ? '會改成「其他」' : '會變成「未分類」'))),
+    sec('刪除次分類', ch.delSub.map((x) => li(x.text, x.n, '會只留主分類'))),
+  ].join('') || '<p class="hint">只有順序改變。</p>');
+  const where = activeLedger() ? ledgerLabel(activeLedger()) : '目前的帳本';
+  $('#modal').innerHTML = `<div class="modal-card cat-text-card" role="dialog" aria-modal="true" aria-label="用文字修改分類">
+    ${head('<button class="text-btn" data-action="cat-text-edit">‹ 修改</button>', `<button class="text-btn" data-action="cat-text-apply"${p.same ? ' disabled' : ''}>套用</button>`)}
+    <div class="form-body">
+      <p class="hint" style="margin-top:0">請確認下面的變更，按「套用」才會改到 ${esc(where)}。</p>
+      ${body}
+      <button class="btn-block" data-action="cat-text-apply"${p.same ? ' disabled' : ''}>套用到 ${esc(where)}</button>
+    </div></div>`;
+}
+
+function applyCatText() {
+  const p = catText?.plan;
+  if (!p || p.same) return;
+  for (const t of data.txs) if (t.type === 'expense') p.remap(t);
+  for (const r of data.recurring || []) p.remap(r);
+  for (const s of data.shortcuts || []) p.remap(s);
+  data.categories.expense = p.tree;
+  catText = null;
+  save();
+  if (catMgr) { catMgr.mainId = null; renderCatManager(); }
+  render();
+  closeLayer();
+  toast('分類已更新');
 }
 
 // ---------- 匯出 / 匯入 ----------
@@ -1795,7 +1944,7 @@ async function copyText(text, label) {
 // 有 API 網址的話附在最後，給能上網讀資料的 AI 工具用
 function aiPrompt() {
   const key = cloud.meta?.apiKey;
-  const cats = data.categories.expense.map((c) => `${c.name}：${c.subs.map((s) => s.name).join('、') || '（沒有次分類）'}`).join('\n');
+  const cats = catLines();
   return `你是我的記帳助理。請幫我把信用卡帳單整理成可以匯入「小帳本」記帳 App 的 Excel。
 
 【小帳本的分類清單】（主分類：次分類）
@@ -2248,6 +2397,17 @@ const actions = {
     const i = list.findIndex((c) => c.id === el.dataset.id);
     if (i > 0) { [list[i - 1], list[i]] = [list[i], list[i - 1]]; save(); renderCatManager(); }
   },
+  'cat-text': () => openCatText(),
+  'cat-text-preview': () => {
+    if (!catText) return;
+    catText.text = $('#catTextBox').value;
+    const { tree, errs } = parseCatText(catText.text);
+    catText.errs = errs;
+    catText.plan = errs.length ? null : planCats(tree);
+    renderCatText();
+  },
+  'cat-text-edit': () => { if (catText) { catText.plan = null; renderCatText(); } },
+  'cat-text-apply': () => applyCatText(),
   'add-sub': () => { const m = findCat('expense', catMgr.mainId); if (m) editSub(m, null); },
   'edit-sub': (el) => { const m = findCat('expense', catMgr.mainId); const s = findSub(m, el.dataset.id); if (s) editSub(m, s); },
   'sub-up': (el) => {
@@ -2405,7 +2565,7 @@ const actions = {
 };
 
 document.addEventListener('click', (ev) => {
-  if (ev.target.id === 'modal' && imp) return; // 匯入預覽不要因為點到背景就整個關掉
+  if (ev.target.id === 'modal' && (imp || catText)) return; // 匯入預覽、修改分類不要因為點到背景就整個關掉
   if (ev.target.id === 'modal' || ev.target.id === 'confirm') { closeLayer(); return; } // 點背景關閉
   const el = ev.target.closest('[data-action]');
   if (!el) return;

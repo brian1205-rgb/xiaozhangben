@@ -529,3 +529,10 @@ button.row:active { background: var(--chip); }
 .api-row .tx-main { display: flex; flex-direction: column; min-width: 0; }
 .api-url { font-size: 13.2px; font-family: ui-monospace, Consolas, monospace; white-space: normal; word-break: break-all; color: var(--muted); }
 .copy-box { width: 100%; padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); font-size: 14.4px; line-height: 1.5; resize: vertical; }
+/* 用文字修改分類 */
+.cat-text-row { margin-top: 12px; }
+.cat-text-box { font-size: 16px; line-height: 1.7; min-height: 300px; }
+.cat-diff { list-style: none; margin: 0; padding: 0; background: var(--card); border-radius: 12px; }
+.cat-diff li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 15px; }
+.cat-diff li:last-child { border-bottom: 0; }
+.cat-diff small { color: var(--muted); font-size: 13px; }
