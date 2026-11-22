@@ -415,3 +415,54 @@ button.row:active { background: var(--chip); }
 .cbtn:active { filter: brightness(.94); }
 @media (hover: hover) { .cbtn:hover { filter: brightness(.96); } .cbtn.danger:hover, .cbtn.primary:hover { filter: brightness(1.06); } }
 .confirm-btns.one { grid-template-columns: 1fr; }
+
+/* ===== 2.3.0：搜尋、預算、固定支出、捷徑 ===== */
+/* 明細頁的搜尋按鈕 */
+.search-open { display: flex; align-items: center; gap: 8px; width: 100%; margin: 14px 0 0; padding: 11px 14px; border-radius: 14px; background: var(--card); box-shadow: 0 0 0 1px var(--line); color: var(--muted); font-size: 16.8px; text-align: left; }
+.search-open svg { width: 20px; height: 20px; flex: none; }
+.search-open:hover { color: var(--text2); }
+.lay-main > .search-open:first-child { margin-top: 0; }
+/* 搜尋頁 */
+.search-page { max-width: 760px; margin: 0 auto; }
+.search-top { display: flex; align-items: center; gap: 8px; position: sticky; top: 0; z-index: 3; background: var(--bg); padding: 6px 0; }
+.search-box { flex: 1; display: flex; align-items: center; gap: 8px; background: var(--card); border-radius: 14px; padding: 0 12px; box-shadow: 0 0 0 2px var(--brand-soft); }
+.search-box svg { width: 20px; height: 20px; color: var(--muted); flex: none; }
+.search-box input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; padding: 12px 0; font-size: 18px; }
+.search-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 4px; align-items: center; }
+.sf { display: flex; align-items: center; gap: 6px; background: var(--card); border-radius: 10px; padding: 4px 10px; font-size: 15.6px; color: var(--text2); box-shadow: 0 0 0 1px var(--line); }
+.sf input, .sf select { border: 0; background: transparent; outline: none; font-size: 16.8px; color: var(--text); padding: 6px 0; max-width: 100%; }
+.sf-date { flex: 1 1 140px; }
+.sf-date input { flex: 1; min-width: 0; }
+.sf-clear { min-width: 0; font-size: 15.6px; }
+.search-sum { margin: 12px 4px 0; color: var(--text2); }
+.search-sum b { color: var(--text); font-size: 19.2px; font-variant-numeric: tabular-nums; }
+/* 每月預算 */
+.budget { display: block; width: 100%; text-align: left; background: var(--card); border-radius: 14px; box-shadow: var(--shadow); padding: 12px 14px; margin-top: 8px; }
+.bg-top { display: flex; justify-content: space-between; gap: 8px; font-size: 16.8px; color: var(--text2); }
+.bg-top b { color: var(--text); font-variant-numeric: tabular-nums; }
+.bg-bar { height: 8px; border-radius: 4px; background: var(--chip); overflow: hidden; margin: 8px 0 6px; }
+.bg-bar i { display: block; height: 100%; border-radius: 4px; background: var(--brand); }
+.bg-sub { font-size: 14.4px; color: var(--muted); }
+.budget.warn .bg-bar i { background: #e8a33a; }
+.budget.over .bg-bar i { background: var(--neg); }
+.budget.over .bg-top span:last-child, .budget.over .bg-top span:last-child b { color: var(--neg); }
+/* 固定支出提醒 */
+.due-card { background: #fff8ec; border-radius: 16px; box-shadow: 0 0 0 1px #f3dcb4; padding: 10px 12px 12px; margin-top: 14px; }
+.lay-main > .due-card:first-child { margin-top: 0; }
+.due-h { font-weight: 700; color: #9a5b12; margin: 0 2px 6px; }
+.due-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; background: var(--card); border-radius: 12px; padding: 10px 12px; }
+.due-row + .due-row { margin-top: 8px; }
+.due-btns { flex-basis: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.due-btns .cbtn { padding: 10px; font-size: 16.8px; }
+/* 記一筆的捷徑 */
+.sc-row { display: flex; align-items: center; gap: 8px; overflow-x: auto; padding: 4px 12px 8px; scrollbar-width: none; }
+.sc-row::-webkit-scrollbar { display: none; }
+.sc-chip { display: inline-flex; align-items: center; gap: 4px; }
+.sc-chip small { color: var(--text2); font-size: 13.2px; }
+.sc-ic { font-family: "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", sans-serif; }
+.sc-add { color: var(--brand); box-shadow: 0 0 0 1px var(--brand-soft); background: var(--brand-soft); }
+/* 表單的下拉選單和說明 */
+.f-row select { width: 100%; padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); font-size: 18px; outline: none; }
+.f-row select:focus { border-color: var(--brand); }
+.f-note { margin: -4px 4px 14px; }
+.search-open span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

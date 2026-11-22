@@ -12,7 +12,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 const STORE_KEY = 'xiaozhangben:v1'; // 舊版（1.x）存在手機裡的資料
-const APP_VERSION = '2.2.4';
+const APP_VERSION = '2.3.0';
 // 1.2.0 起支出分類分成「主分類 + 次分類」，資料格式 version 2（舊資料自動轉換）。
 // 1.1.0 起只記支出。舊版的收入／轉帳記錄仍保留在資料與備份檔中，只是不顯示。
 
@@ -64,6 +64,9 @@ function defaultData() {
     },
     txs: [],
     prefs: {},
+    budget: 0,       // 每月預算（0 = 沒設定）
+    recurring: [],   // 固定支出
+    shortcuts: [],   // 記一筆的常用捷徑
   };
 }
 
@@ -117,6 +120,25 @@ function normalize(d) {
       .filter((t) => t && ['expense', 'income', 'transfer'].includes(t.type) && /^\d{4}-\d{2}-\d{2}$/.test(t.date))
       .map((t) => ({ ...t, amount: Number(t.amount) || 0, note: String(t.note ?? ''), subCategoryId: t.subCategoryId ? String(t.subCategoryId) : null })),
     prefs: d.prefs && typeof d.prefs === 'object' ? d.prefs : {},
+    ...normExtras(d),
+  };
+}
+
+// 2.3.0 起帳本多了：每月預算、固定支出、常用捷徑（舊資料沒有就用空的）
+function normExtras(d) {
+  const str = (v) => (v == null || v === '' ? null : String(v));
+  return {
+    budget: Math.max(0, Number(d.budget) || 0),
+    recurring: (Array.isArray(d.recurring) ? d.recurring : []).filter((r) => r && r.id).map((r) => ({
+      id: String(r.id), name: String(r.name ?? ''), amount: Number(r.amount) || 0,
+      day: Math.min(31, Math.max(1, Number(r.day) || 1)),
+      categoryId: str(r.categoryId), subCategoryId: str(r.subCategoryId), accountId: str(r.accountId),
+      lastDone: str(r.lastDone), // 最後處理的月份 'YYYY-MM'
+    })),
+    shortcuts: (Array.isArray(d.shortcuts) ? d.shortcuts : []).filter((s) => s && s.id).map((s) => ({
+      id: String(s.id), name: String(s.name ?? ''), amount: Number(s.amount) || 0,
+      categoryId: str(s.categoryId), subCategoryId: str(s.subCategoryId), accountId: str(s.accountId),
+    })),
   };
 }
 
@@ -175,7 +197,10 @@ const ledgerLabel = (l) => (l.type === 'personal' ? '👤 個人' : `🏠 ${l.na
 let data = { ...defaultData(), accounts: [], categories: { expense: [], income: [] } };
 // 上次跟雲端同步時的樣子：save() 比對出有改的地方才上傳
 let synced = { meta: '', txs: new Map() };
-const metaJSON = (d) => JSON.stringify({ accounts: d.accounts, categories: d.categories });
+// 帳本本身的設定（不含每筆記錄）：有變才寫回雲端
+const META_KEYS = ['accounts', 'categories', 'budget', 'recurring', 'shortcuts'];
+const metaOf = (d) => Object.fromEntries(META_KEYS.map((k) => [k, d[k]]));
+const metaJSON = (d) => JSON.stringify(metaOf(d));
 const clean = (o) => JSON.parse(JSON.stringify(o)); // 拿掉 undefined（Firestore 不接受）
 const ledgerRef = (id) => doc(db, 'ledgers', id);
 const txRef = (lid, id) => doc(db, 'ledgers', lid, 'txs', String(id).replace(/\//g, '_'));
@@ -201,7 +226,7 @@ function save() {
   const ops = [];
   const mj = metaJSON(data);
   if (mj !== synced.meta) {
-    ops.push(['set', ledgerRef(lid), clean({ accounts: data.accounts, categories: data.categories, updatedAt: Date.now() }), { merge: true }]);
+    ops.push(['set', ledgerRef(lid), clean({ ...metaOf(data), updatedAt: Date.now() }), { merge: true }]);
     synced.meta = mj;
   }
   const seen = new Set();
@@ -247,7 +272,7 @@ function bookFor(id) {
   try { prefs = JSON.parse(lsGet('xiaozhangben:prefs:' + id) || '{}') || {}; } catch {}
   const b = {
     id, meta: null, gotMeta: false, gotTxs: false, pending: false, unsub: [],
-    data: { version: 2, accounts: [], categories: { expense: [], income: [] }, txs: [], prefs },
+    data: { version: 2, accounts: [], categories: { expense: [], income: [] }, txs: [], prefs, budget: 0, recurring: [], shortcuts: [] },
     synced: { meta: '', txs: new Map() },
   };
   books.set(id, b);
@@ -267,10 +292,10 @@ function bookFor(id) {
     if (!snap.exists()) return;
     const m = snap.data();
     b.meta = { id, ...m };
-    const d = normalize({ accounts: m.accounts || [], categories: { expense: m.categories?.expense || [], income: m.categories?.income || [] }, txs: [] });
+    const d = normalize({ ...m, accounts: m.accounts || [], categories: { expense: m.categories?.expense || [], income: m.categories?.income || [] }, txs: [], prefs: {} });
     const mj = metaJSON(d);
     // 只有別人（或另一支手機）改過才換掉，避免打斷正在編輯的畫面
-    if (mj !== b.synced.meta) { b.data.accounts = d.accounts; b.data.categories = d.categories; b.synced.meta = mj; }
+    if (mj !== b.synced.meta) { for (const k of META_KEYS) b.data[k] = d[k]; b.synced.meta = mj; }
     b.gotMeta = true;
     // 家用帳本：把自己的名字記在成員名單上，讓大家看得到是誰記的
     if (m.type === 'family' && m.members?.[cloud.user.uid]?.name !== myName()) {
@@ -303,7 +328,7 @@ function openLedger(id) {
   const switching = cloud.activeId && cloud.activeId !== id;
   cloud.activeId = id;
   activate(bookFor(id));
-  ui.reportAccs.clear(); ui.reportSel = null;
+  ui.reportAccs.clear(); ui.reportSel = null; ui.search = null;
   lsSet('xiaozhangben:active:' + cloud.user.uid, id);
   render();
   if (switching) {
@@ -425,7 +450,8 @@ const ymKey = (ym) => `${ym.y}-${pad(ym.m)}`;
 // day：首頁選取的日期；range：明細清單要看「當天／當週／整月」；calOpen：是否展開整月日曆
 // 電腦版（螢幕寬）：日曆預設就展開整月
 const isWide = () => window.matchMedia('(min-width: 960px)').matches;
-const ui = { tab: 'list', ym: currentYM(), reportSel: null, reportAccs: new Set(), day: todayStr(), range: 'month', calOpen: isWide() };
+// search：明細頁的搜尋條件（null = 沒在搜尋）
+const ui = { tab: 'list', ym: currentYM(), reportSel: null, reportAccs: new Set(), day: todayStr(), range: 'month', calOpen: isWide(), search: null };
 
 // 換月份後的狀態：本月就選今天，其他月份選 1 號；清單回到看整月
 function monthState(delta) {
@@ -622,7 +648,214 @@ function dayLabel(ds) {
   return `${d.getMonth() + 1}月${d.getDate()}日 週${WEEK[d.getDay()]}${tag}`;
 }
 
+// ---------- 搜尋與篩選 ----------
+const SEARCH_EMPTY = { q: '', from: '', to: '', acc: '', by: '' };
+const memberList = () => Object.entries(cloud.meta?.members || {}).map(([id, m]) => ({ id, name: m.name || m.email || '家人' }));
+
+function viewSearch() {
+  const s = ui.search;
+  const opt = (v, label, sel) => `<option value="${esc(v)}"${v === sel ? ' selected' : ''}>${esc(label)}</option>`;
+  return `<div class="search-page">
+    <div class="search-top">
+      <label class="search-box">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <input id="sQ" type="search" placeholder="搜尋備註、主分類、次分類…" value="${esc(s.q)}" enterkeyhint="search" autocomplete="off">
+      </label>
+      <button class="text-btn" data-action="search-close">完成</button>
+    </div>
+    <div class="search-filters">
+      <label class="sf sf-date"><span>從</span><input id="sFrom" type="date" value="${esc(s.from)}"></label>
+      <label class="sf sf-date"><span>到</span><input id="sTo" type="date" value="${esc(s.to)}"></label>
+      <label class="sf"><select id="sAcc" aria-label="付款方式">${opt('', '全部付款方式', s.acc)}${data.accounts.map((a) => opt(a.id, `${a.icon} ${a.name}`, s.acc)).join('')}</select></label>
+      ${isFamily() ? `<label class="sf"><select id="sBy" aria-label="記錄者">${opt('', '全部記錄者', s.by)}${memberList().map((m) => opt(m.id, m.id === cloud.user.uid ? `${m.name}（我）` : m.name, s.by)).join('')}</select></label>` : ''}
+      ${s.q || s.from || s.to || s.acc || s.by ? `<button class="text-btn sf-clear" data-action="search-clear">清除條件</button>` : ''}
+    </div>
+    <div id="searchResults">${searchResults()}</div>
+  </div>`;
+}
+
+function searchResults() {
+  const s = ui.search;
+  const q = s.q.trim().toLowerCase();
+  if (!q && !s.from && !s.to && !s.acc && !s.by) {
+    return `<div class="empty"><div class="big">🔍</div>輸入關鍵字，或選擇日期、付款方式${isFamily() ? '、記錄者' : ''}來篩選</div>`;
+  }
+  const hits = data.txs.filter((t) => {
+    if (t.type !== 'expense') return false;
+    if (s.from && t.date < s.from) return false;
+    if (s.to && t.date > s.to) return false;
+    if (s.acc && t.accountId !== s.acc) return false;
+    if (s.by && t.by !== s.by) return false;
+    if (!q) return true;
+    const c = findCat('expense', t.categoryId);
+    const sub = findSub(c, t.subCategoryId);
+    return [t.note, c?.name, sub?.name].some((x) => x && String(x).toLowerCase().includes(q));
+  }).sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
+  let html = `<div class="search-sum">找到 <b>${hits.length}</b> 筆，合計 <b>$${fmt(sumAmt(hits))}</b></div>`;
+  if (!hits.length) return html + `<div class="empty">沒有符合的記錄</div>`;
+  const groups = new Map();
+  for (const t of hits.slice(0, 500)) {
+    if (!groups.has(t.date)) groups.set(t.date, []);
+    groups.get(t.date).push(t);
+  }
+  for (const [ds, list] of groups) {
+    html += `<section class="day"><div class="day-head"><span>${ds.slice(0, 4)}年${dayLabel(ds)}</span><span>$${fmt(sumAmt(list))}</span></div>
+      <div class="rows">${list.map(txRow).join('')}</div></section>`;
+  }
+  if (hits.length > 500) html += `<p class="hint">只顯示最近 500 筆，可以加上日期縮小範圍。</p>`;
+  return html;
+}
+
+// 搜尋框和篩選條件改變時，只更新結果（不重畫整頁，打字才不會被打斷）
+function onSearchInput(ev) {
+  if (!ui.search || !ev.target.closest('.search-page')) return;
+  const map = { sQ: 'q', sFrom: 'from', sTo: 'to', sAcc: 'acc', sBy: 'by' };
+  const key = map[ev.target.id];
+  if (!key) return;
+  ui.search[key] = ev.target.value;
+  $('#searchResults').innerHTML = searchResults();
+  const clearBtn = $('.sf-clear'), any = Object.values(ui.search).some(Boolean);
+  if (any && !clearBtn) $('.search-filters').insertAdjacentHTML('beforeend', `<button class="text-btn sf-clear" data-action="search-clear">清除條件</button>`);
+  if (!any && clearBtn) clearBtn.remove();
+}
+document.addEventListener('input', onSearchInput);
+document.addEventListener('change', onSearchInput);
+
+// ---------- 每月預算 ----------
+function budgetBar() {
+  const budget = data.budget || 0;
+  if (!budget) return '';
+  const spent = sumAmt(monthTxs());
+  const left = round2(budget - spent);
+  const ratio = spent / budget;
+  const cls = left < 0 ? ' over' : ratio >= 0.8 ? ' warn' : '';
+  const now = currentYM();
+  let tip = '';
+  if (ui.ym.y === now.y && ui.ym.m === now.m && left > 0) {
+    const daysLeft = new Date(now.y, now.m, 0).getDate() - new Date().getDate() + 1;
+    tip = ` · 平均每天可花 $${fmt(Math.floor(left / daysLeft))}`;
+  }
+  return `<button class="budget${cls}" data-action="edit-budget" aria-label="每月預算，點一下修改">
+    <div class="bg-top"><span>${ui.ym.m} 月已花 <b>$${fmt(spent)}</b></span><span>${left < 0 ? `超支 <b>$${fmt(-left)}</b>` : `還剩 <b>$${fmt(left)}</b>`}</span></div>
+    <div class="bg-bar"><i style="width:${Math.min(100, ratio * 100).toFixed(1)}%"></i></div>
+    <div class="bg-sub">預算 $${fmt(budget)}${tip}</div>
+  </button>`;
+}
+
+function editBudget() {
+  openForm({
+    title: '每月預算',
+    fields: [
+      { key: 'budget', label: `「${isFamily() ? (cloud.meta?.name || '家用') : '個人'}」帳本每個月的預算`, type: 'number', value: data.budget ? String(data.budget) : '', placeholder: '例如：20000', max: 9 },
+      { type: 'note', key: 'n', label: isFamily() ? '家用帳本的預算全家共用，大家看到的都一樣。清空再儲存就會取消預算。' : '首頁會顯示這個月已花多少、還剩多少。清空再儲存就會取消預算。' },
+    ],
+    onSave: (v) => {
+      const n = Number(String(v.budget).replace(/[,，\s]/g, ''));
+      if (v.budget && !(n >= 0)) { toast('請輸入數字'); return false; }
+      data.budget = v.budget ? Math.round(n) : 0;
+      save(); render(); toast(data.budget ? `每月預算設為 $${fmt(data.budget)}` : '已取消每月預算');
+    },
+  });
+}
+
+// ---------- 固定支出 ----------
+const dueDateOf = (r, ym) => `${ymKey(ym)}-${pad(Math.min(r.day, new Date(ym.y, ym.m, 0).getDate()))}`;
+// 這個月已經到期、還沒處理的固定支出
+function dueItems() {
+  const now = currentYM(), key = ymKey(now), today = todayStr();
+  return (data.recurring || []).filter((r) => r.lastDone !== key && dueDateOf(r, now) <= today);
+}
+
+function dueCard() {
+  const items = dueItems();
+  if (!items.length) return '';
+  return `<div class="due-card"><div class="due-h">🔔 固定支出到期了</div>${items.map((r) => {
+    const c = findCat('expense', r.categoryId);
+    const sub = findSub(c, r.subCategoryId);
+    return `<div class="due-row">
+      <span class="tx-icon">${esc(c?.icon || '📌')}</span>
+      <span class="tx-main"><span class="tx-name">${esc(r.name)}</span><span class="tx-sub">每月 ${r.day} 號 · ${esc([sub?.name || c?.name, accName(r.accountId)].filter(Boolean).join(' · '))}</span></span>
+      <span class="tx-amt">$${fmt(r.amount)}</span>
+      <div class="due-btns"><button class="cbtn" data-action="due-skip" data-id="${esc(r.id)}">這個月略過</button><button class="cbtn primary" data-action="due-pay" data-id="${esc(r.id)}">記一筆</button></div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+// 給表單用：「主分類 › 次分類」的選項
+function catOptions() {
+  const out = [];
+  for (const c of data.categories.expense) {
+    out.push({ value: c.id, label: `${c.icon} ${c.name}` });
+    for (const s of c.subs) out.push({ value: `${c.id}|${s.id}`, label: `　${c.name} › ${s.name}` });
+  }
+  return out;
+}
+const splitCat = (v) => { const [c, s] = String(v || '').split('|'); return { categoryId: c || null, subCategoryId: s || null }; };
+const catValue = (o) => (o?.categoryId ? (o.subCategoryId ? `${o.categoryId}|${o.subCategoryId}` : o.categoryId) : (data.categories.expense[0]?.id ?? ''));
+const accOpts = () => data.accounts.map((a) => ({ value: a.id, label: `${a.icon} ${a.name}` }));
+
+function editRecurring(r) {
+  openForm({
+    title: r ? '編輯固定支出' : '新增固定支出',
+    fields: [
+      { key: 'name', label: '名稱', value: r?.name ?? '', placeholder: '例如：房租、電信費、Netflix', max: 20 },
+      { key: 'amount', label: '金額', type: 'number', value: r?.amount ? String(r.amount) : '', placeholder: '例如：899', max: 9 },
+      { key: 'day', label: '每月幾號扣款（1–31）', type: 'number', value: String(r?.day ?? new Date().getDate()), max: 2 },
+      { key: 'cat', label: '分類', type: 'select', value: catValue(r), options: catOptions() },
+      { key: 'acc', label: '付款方式', type: 'select', value: r?.accountId ?? data.accounts[0]?.id, options: accOpts() },
+      { type: 'note', key: 'n', label: '到了扣款日，首頁會出現提醒，點「記一筆」就會帶入這些內容，金額可以再改。' },
+    ],
+    onSave: (v) => {
+      const amount = Number(String(v.amount).replace(/[,，\s]/g, ''));
+      const day = Number(v.day);
+      if (!v.name) { toast('請輸入名稱'); return false; }
+      if (!(amount > 0)) { toast('請輸入金額'); return false; }
+      if (!(day >= 1 && day <= 31)) { toast('扣款日請輸入 1 到 31'); return false; }
+      const val = { name: v.name, amount: round2(amount), day: Math.round(day), ...splitCat(v.cat), accountId: v.acc || null };
+      if (r) Object.assign(r, val);
+      else data.recurring = [...(data.recurring || []), { id: uid(), ...val, lastDone: null }];
+      save(); render(); toast('已儲存');
+    },
+    onDelete: r ? async () => {
+      if (!(await askConfirm({ title: `確定刪除固定支出「${r.name}」嗎？`, message: '已經記下的帳不會受影響。', ok: '刪除' }))) return false;
+      data.recurring = data.recurring.filter((x) => x.id !== r.id);
+      save(); render(); toast('已刪除');
+    } : null,
+  });
+}
+
+// ---------- 常用捷徑 ----------
+function editShortcut(s, fromEntry = null) {
+  const base = s || fromEntry || {};
+  openForm({
+    title: s ? '編輯捷徑' : '新增捷徑',
+    fields: [
+      { key: 'name', label: '名稱', value: base.name ?? '', placeholder: '例如：早餐、停車、捷運', max: 8 },
+      { key: 'cat', label: '分類', type: 'select', value: catValue(base), options: catOptions() },
+      { key: 'acc', label: '付款方式', type: 'select', value: base.accountId ?? data.accounts[0]?.id, options: accOpts() },
+      { key: 'amount', label: '預設金額（可不填）', type: 'number', value: base.amount ? String(base.amount) : '', placeholder: '不填就每次自己輸入', max: 9 },
+    ],
+    onSave: (v) => {
+      if (!v.name) { toast('請輸入名稱'); return false; }
+      const amount = v.amount ? Number(String(v.amount).replace(/[,，\s]/g, '')) : 0;
+      if (v.amount && !(amount > 0)) { toast('金額請輸入數字'); return false; }
+      const val = { name: v.name, ...splitCat(v.cat), accountId: v.acc || null, amount: round2(amount) };
+      if (s) Object.assign(s, val);
+      else data.shortcuts = [...(data.shortcuts || []), { id: uid(), ...val }];
+      save();
+      if (entry && $('#scRow')) $('#scRow').outerHTML = shortcutRow();
+      render(); toast('已儲存捷徑');
+    },
+    onDelete: s ? async () => {
+      if (!(await askConfirm({ title: `確定刪除捷徑「${s.name}」嗎？`, ok: '刪除' }))) return false;
+      data.shortcuts = data.shortcuts.filter((x) => x.id !== s.id);
+      save(); render(); toast('已刪除');
+    } : null,
+  });
+}
+
 function viewList() {
+  if (ui.search) return viewSearch();
   // 每天的支出總額與筆數（給日曆小圓點和統計用）
   const byDay = new Map();
   for (const t of data.txs) {
@@ -645,10 +878,12 @@ function viewList() {
   }
   const txs = pool.sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
   // 手機：上下排；電腦：左邊日曆、右邊明細
-  const side = monthBar(true) + calendarCard(byDay) + rangeStats(byDay);
-  let main = '';
+  const side = monthBar(true) + calendarCard(byDay) + rangeStats(byDay) + budgetBar();
+  let main = dueCard() + `<button class="search-open" data-action="search-open">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <span>搜尋明細（備註、分類、日期…）</span></button>`;
   if (!txs.length) {
-    main = `<div class="empty"><div class="big">📝</div>${emptyMsg}<br>按「＋ 記一筆」開始記帳</div>`;
+    main += `<div class="empty"><div class="big">📝</div>${emptyMsg}<br>按「＋ 記一筆」開始記帳</div>`;
   } else {
     const groups = new Map();
     for (const t of txs) {
@@ -874,6 +1109,23 @@ function viewSettings() {
     <p class="hint">個人帳本只有你看得到；家用帳本你和加入的家人都看得到、都能記。</p>
     </section>
     ${membersHtml}
+    <section class="group"><h2>每月預算</h2><div class="rows">
+      <button class="row" data-action="edit-budget"><span>每月預算</span><span class="row-val">${data.budget ? `$${fmt(data.budget)}` : '未設定'} ›</span></button>
+    </div><p class="hint">${fam ? '家用帳本全家共用同一個預算。' : ''}設定後首頁會顯示這個月已花多少、還剩多少。</p></section>
+    <section class="group"><h2>固定支出</h2><div class="rows">
+      ${(data.recurring || []).slice().sort((a, b) => a.day - b.day).map((r) => {
+        const done = r.lastDone === ymKey(currentYM());
+        return `<button class="row" data-action="edit-recurring" data-id="${esc(r.id)}"><span class="tx-main"><span>${esc(r.name)}</span><span class="tx-sub">每月 ${r.day} 號 · ${esc(accName(r.accountId))}${done ? ' · 本月已處理' : ''}</span></span><span class="row-val">$${fmt(r.amount)} ›</span></button>`;
+      }).join('')}
+      <button class="row" data-action="add-recurring"><span>＋ 新增固定支出</span><span class="row-val">房租、電信費… ›</span></button>
+    </div><p class="hint">每月到扣款日，首頁會提醒你，點一下就能記一筆。</p></section>
+    <section class="group"><h2>常用支出捷徑</h2><div class="rows">
+      ${(data.shortcuts || []).map((s) => {
+        const c = findCat('expense', s.categoryId), sub = findSub(c, s.subCategoryId);
+        return `<button class="row" data-action="edit-shortcut" data-id="${esc(s.id)}"><span class="tx-main"><span>${esc(c?.icon || '⭐')} ${esc(s.name)}</span><span class="tx-sub">${esc([sub ? `${c.name} › ${sub.name}` : c?.name, accName(s.accountId)].filter(Boolean).join(' · '))}</span></span><span class="row-val">${s.amount ? `$${fmt(s.amount)}` : ''} ›</span></button>`;
+      }).join('')}
+      <button class="row" data-action="add-shortcut"><span>＋ 新增捷徑</span><span class="row-val">早餐、停車… ›</span></button>
+    </div><p class="hint">記一筆時上方會出現這些捷徑，點一下帶入分類和付款方式。記一筆畫面也可以按「＋ 存成捷徑」。</p></section>
     <section class="group"><h2>分類</h2><div class="rows">
       <button class="row" data-action="manage-cats" data-type="expense"><span>支出分類</span><span class="row-val">${data.categories.expense.length} 個主分類 ›</span></button>
     </div>${fam ? '<p class="hint">家用帳本的分類和付款方式是全家共用的。</p>' : ''}</section>
@@ -1021,18 +1273,22 @@ const notice = (title, message = '') => askConfirm({ title, message, ok: '知道
 // ---------- 記一筆 ----------
 let entry = null;
 
-function openEntry(tx) {
+// tx：要編輯的記錄；prefill：新增時先帶入的內容（固定支出、捷徑）
+function openEntry(tx, prefill = null) {
   const lastAcc = findAcc(data.prefs.lastAccountId) ? data.prefs.lastAccountId : data.accounts[0]?.id;
+  const p = tx || prefill || {};
   entry = {
     id: tx?.id ?? null,
-    expr: tx ? String(tx.amount) : '0',
-    fresh: !!tx, // 編輯時，第一次按數字會取代原金額
-    categoryId: tx?.categoryId ?? data.categories.expense[0]?.id ?? null,
-    subCategoryId: tx?.subCategoryId ?? null,
-    accountId: tx?.accountId ?? lastAcc ?? null,
-    date: tx?.date ?? (ui.tab === 'list' && ui.range === 'day' ? ui.day : todayStr()), // 選了某一天就預設記在那天
-    note: tx?.note ?? '',
+    expr: p.amount ? String(p.amount) : '0',
+    fresh: !!p.amount, // 已經有金額時，第一次按數字會取代原金額
+    categoryId: (findCat('expense', p.categoryId) ? p.categoryId : null) ?? data.categories.expense[0]?.id ?? null,
+    subCategoryId: p.subCategoryId ?? null,
+    accountId: (findAcc(p.accountId) ? p.accountId : null) ?? lastAcc ?? null,
+    date: p.date ?? (ui.tab === 'list' && ui.range === 'day' ? ui.day : todayStr()), // 選了某一天就預設記在那天
+    note: p.note ?? '',
+    recurringId: prefill?.recurringId ?? null, // 從固定支出來的：存檔後標記這個月已處理
   };
+  if (!findSub(findCat('expense', entry.categoryId), entry.subCategoryId)) entry.subCategoryId = null;
   renderEntry();
   openLayer('sheet');
 }
@@ -1056,6 +1312,7 @@ function renderEntry() {
     </div>
     <div class="amount-box"><span class="amount-cur">$</span><span class="amount-text" id="amountText"></span></div>
     <div class="amount-preview" id="amountPreview"></div>
+    ${e.id ? '' : shortcutRow()}
     <div class="entry-body">${body}</div>
     <div class="sub-row" id="subRow">${subChips()}</div>
     <div class="entry-fields">
@@ -1070,6 +1327,15 @@ function renderEntry() {
       ${K('clear', 'C', 'k-op')}${K('0', '0')}${K('.', '.')}<button class="k-ok" data-action="key" data-k="ok" id="keyOk">儲存</button>
     </div></div>`;
   updateAmount();
+}
+
+// 常用捷徑：點一下帶入分類和付款方式（有設定金額也一起帶入），最後一個「＋」把目前的選擇存成捷徑
+function shortcutRow() {
+  const list = data.shortcuts || [];
+  return `<div class="sc-row" id="scRow"><span class="sub-label">常用 ›</span>${list.map((s) => {
+    const c = findCat('expense', s.categoryId);
+    return `<button class="chip sc-chip" data-action="use-shortcut" data-id="${esc(s.id)}"><span class="sc-ic">${esc(c?.icon || '⭐')}</span>${esc(s.name)}${s.amount ? ` <small>$${fmt(s.amount)}</small>` : ''}</button>`;
+  }).join('')}<button class="chip sc-add" data-action="save-shortcut">＋ 存成捷徑</button></div>`;
 }
 
 // 次分類小按鈕（可不選；再點一次取消）
@@ -1161,9 +1427,12 @@ function saveEntry() {
   if (old) data.txs[data.txs.indexOf(old)] = tx;
   else data.txs.push(tx);
   data.prefs.lastAccountId = e.accountId;
+  // 從固定支出提醒記的：這個月就不再提醒
+  const rec = e.recurringId && (data.recurring || []).find((r) => r.id === e.recurringId);
+  if (rec) rec.lastDone = ymKey(currentYM());
   save();
 
-  selectDay(tx.date); // 跳到這筆記錄的日期（保持目前的今日／本週／本月篩選）
+  if (!ui.search) selectDay(tx.date); // 跳到這筆記錄的日期（保持目前的今日／本週／本月篩選；搜尋中就留在搜尋結果）
   closeLayer();
   render();
   toast(old ? '已更新' : `已記下 $${fmt(amount)}`);
@@ -1181,6 +1450,11 @@ function openForm(opts) {
       return `<div class="f-row"><span>${esc(f.label)}</span><div class="emoji-grid">${list.map((em) =>
         `<button type="button" class="${em === f.value ? 'on' : ''}" data-action="form-emoji" data-key="${esc(f.key)}" data-v="${esc(em)}">${esc(em)}</button>`).join('')}</div></div>`;
     }
+    if (f.type === 'select') {
+      return `<label class="f-row"><span>${esc(f.label)}</span><select id="f_${esc(f.key)}">${f.options.map((o) =>
+        `<option value="${esc(o.value)}"${o.value === (f.value ?? '') ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}</select></label>`;
+    }
+    if (f.type === 'note') return `<p class="hint f-note">${esc(f.label)}</p>`;
     return `<label class="f-row"><span>${esc(f.label)}</span><input id="f_${esc(f.key)}" type="text" inputmode="${f.type === 'number' ? 'decimal' : 'text'}"
       value="${esc(f.value ?? '')}" placeholder="${esc(f.placeholder || '')}" maxlength="${f.max || 20}" autocomplete="off"></label>`;
   };
@@ -1447,7 +1721,45 @@ function toast(msg) {
 
 // ---------- 事件 ----------
 const actions = {
-  'tab': (el) => { ui.tab = el.dataset.tab; ui.reportSel = null; render(); window.scrollTo(0, 0); },
+  'tab': (el) => { ui.tab = el.dataset.tab; ui.reportSel = null; ui.search = null; render(); window.scrollTo(0, 0); },
+  // 搜尋
+  'search-open': () => { ui.search = { ...SEARCH_EMPTY }; render(); window.scrollTo(0, 0); setTimeout(() => $('#sQ')?.focus(), 30); },
+  'search-close': () => { ui.search = null; render(); window.scrollTo(0, 0); },
+  'search-clear': () => { ui.search = { ...SEARCH_EMPTY }; render(); setTimeout(() => $('#sQ')?.focus(), 30); },
+  // 預算
+  'edit-budget': () => editBudget(),
+  // 固定支出
+  'add-recurring': () => editRecurring(null),
+  'edit-recurring': (el) => { const r = (data.recurring || []).find((x) => x.id === el.dataset.id); if (r) editRecurring(r); },
+  'due-pay': (el) => {
+    const r = (data.recurring || []).find((x) => x.id === el.dataset.id);
+    if (r) openEntry(null, { amount: r.amount, categoryId: r.categoryId, subCategoryId: r.subCategoryId, accountId: r.accountId, note: r.name, date: todayStr(), recurringId: r.id });
+  },
+  'due-skip': (el) => {
+    const r = (data.recurring || []).find((x) => x.id === el.dataset.id);
+    if (!r) return;
+    r.lastDone = ymKey(currentYM());
+    save(); render(); toast(`這個月的「${r.name}」已略過`);
+  },
+  // 常用捷徑
+  'add-shortcut': () => editShortcut(null),
+  'edit-shortcut': (el) => { const s = (data.shortcuts || []).find((x) => x.id === el.dataset.id); if (s) editShortcut(s); },
+  'use-shortcut': (el) => {
+    const s = (data.shortcuts || []).find((x) => x.id === el.dataset.id);
+    if (!s || !entry) return;
+    if (findCat('expense', s.categoryId)) { entry.categoryId = s.categoryId; entry.subCategoryId = s.subCategoryId; }
+    if (findAcc(s.accountId)) entry.accountId = s.accountId;
+    if (s.amount) { entry.expr = String(s.amount); entry.fresh = true; }
+    renderEntry();
+    toast(`已帶入「${s.name}」`);
+  },
+  'save-shortcut': () => {
+    if (!entry) return;
+    const c = findCat('expense', entry.categoryId);
+    const sub = findSub(c, entry.subCategoryId);
+    const amt = evalExpr(entry.expr);
+    editShortcut(null, { name: sub?.name || c?.name || '', categoryId: entry.categoryId, subCategoryId: entry.subCategoryId, accountId: entry.accountId, amount: amt > 0 ? amt : 0 });
+  },
   'month': (el) => { shiftMonth(Number(el.dataset.d)); ui.reportSel = null; render(); },
   'month-now': () => { ui.ym = currentYM(); ui.day = todayStr(); ui.range = 'month'; ui.reportSel = null; render(); },
   'toggle-cal': () => { if (isWide()) return; ui.calOpen = !ui.calOpen; render(); }, // 電腦版固定顯示整月
@@ -1530,7 +1842,10 @@ const actions = {
   },
   'form-save': () => {
     const values = {};
-    for (const f of form.fields) values[f.key] = f.type === 'emoji' ? form.emoji[f.key] : $('#f_' + f.key).value.trim();
+    for (const f of form.fields) {
+      if (f.type === 'note') continue;
+      values[f.key] = f.type === 'emoji' ? form.emoji[f.key] : $('#f_' + f.key).value.trim();
+    }
     if (form.onSave(values) !== false) closeLayer();
   },
   // 表單裡的「刪除」：確認後要關掉確認視窗和表單兩層
@@ -1739,13 +2054,15 @@ document.addEventListener('keydown', (ev) => {
   if (ev.target.matches?.('input, select, textarea')) {
     if (ev.key === 'Enter' && ev.target.type === 'text') ev.target.blur();
     if (ev.key === 'Escape' && top) { ev.target.blur(); closeLayer(); }
+    else if (ev.key === 'Escape' && ui.search) actions['search-close']();
     return;
   }
   if (ev.key === 'Escape' && top) { closeLayer(); return; }
+  if (ev.key === 'Escape' && ui.search) { actions['search-close'](); return; }
   // 電腦快捷鍵（沒有開任何視窗時）：N 記一筆、← → 換月份
   if (!top && !ev.ctrlKey && !ev.metaKey && !ev.altKey && cloud.status === 'ready') {
     if (ev.key === 'n' || ev.key === 'N') { ev.preventDefault(); actions['new-tx'](); return; }
-    if ((ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') && (ui.tab === 'list' || ui.tab === 'report')) {
+    if ((ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') && !ui.search && (ui.tab === 'list' || ui.tab === 'report')) {
       ev.preventDefault(); shiftMonth(ev.key === 'ArrowLeft' ? -1 : 1); ui.reportSel = null; render(); return;
     }
   }
