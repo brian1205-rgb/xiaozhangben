@@ -5,7 +5,7 @@
 
 - 網站：https://brian1205-rgb.github.io/xiaozhangben/
 - 存放區：https://github.com/brian1205-rgb/xiaozhangben（Public，`main` 分支根目錄就是網站）
-- 目前版本：**2.5.0**（`app.js` 的 `APP_VERSION`）
+- 目前版本：**2.5.1**（`app.js` 的 `APP_VERSION`）
 
 ## 多台電腦開發（重要）
 使用者會在不同電腦開發，GitHub 是唯一的正本：
@@ -31,7 +31,7 @@
 index.html            頁面骨架、底部選單
 app.js                全部程式（ES module，無框架、無打包；從 gstatic CDN 載入 Firebase 10.14.1）
 style.css             樣式（固定淺色）
-sw.js                 Service Worker：network-first 離線快取，抓檔用 cache:no-cache（GitHub Pages 有 max-age=600，不這樣手機會用 10 分鐘內的舊檔）。改了檔案要把 CACHE 版本 +1（目前 xiaozhangben-v25）；gstatic 的 Firebase 檔案和 Google 字型用 cache-first
+sw.js                 Service Worker：network-first 離線快取，抓檔用 cache:no-cache（GitHub Pages 有 max-age=600，不這樣手機會用 10 分鐘內的舊檔）。改了檔案要把 CACHE 版本 +1（目前 xiaozhangben-v26）；gstatic 的 Firebase 檔案和 Google 字型用 cache-first
 manifest.webmanifest  PWA 設定
 icon-192.png / icon-512.png / apple-touch-icon.png   App 圖示（手繪暖色風）
 _config.yml           GitHub Pages 設定：排除 CLAUDE.md；_ 開頭資料夾本來就不會發佈
@@ -69,7 +69,7 @@ _dev/tools/           開發工具（不會出現在網站上）
 - `demo: true` 的是範例資料（設定頁可一鍵加入／移除，不影響真實記錄）。
 - **改資料格式一定要寫轉換程式並測舊資料**；匯入備份也會經過 `normalize()`。
 
-## 功能現況（2.5.0）
+## 功能現況（2.5.1）
 - 首頁：月份切換、**這星期日曆**（有記錄的日子有圓點，可展開整月；左右滑動時日曆跟著手指移動，放開後平滑換週/月）、**今日／本週／本月**三格（點了切換清單範圍）、依日期分組的明細（每筆第二行是彩色小標籤：主分類灰、付款方式藍、記錄者橘；備註在第三行）。選了某天按＋會預設記在那天。
 - 2.3.0 新增（帳本文件多了 `budget`、`recurring[]`、`shortcuts[]`，見 `normExtras()`；`META_KEYS` 決定哪些帳本欄位會同步）：
   - 搜尋與篩選：明細頁「搜尋明細」→ 搜備註／主分類／次分類，篩日期區間、付款方式、記錄者（家用）；顯示筆數和合計（`ui.search`、`viewSearch()`，打字只更新 `#searchResults`）。
@@ -82,7 +82,7 @@ _dev/tools/           開發工具（不會出現在網站上）
   - 日期可為 Excel 日期、2026/11/3、2026-11-03、20261103、民國 115/11/03、只有月/日（猜年份）。分類依名稱對應（主分類欄也可寫「飲食 › 早餐」）；付款方式依名稱，空白用預設（名稱含「信用卡」的優先）。
   - 預覽（`#modal` 的 `.import-card`，`imp` 狀態、`renderImport()`）：找不到分類標紅可直接選；負數金額、日期錯誤不能匯入；同日期同金額標「可能重複」預設不勾；可一次改全部付款方式、全選／全不選。點背景不會關閉。
   - 匯入的記錄多一個 `importId`（同一次匯入相同）；設定頁列出最近 5 批，可「刪除這批」。也可下載 Excel 範本（明細＋分類清單＋付款方式＋說明）。
-  - 2.5.0 給 AI 讀分類的唯讀 API：設定頁「AI 整理帳單（分類 API）」產生網址（Firestore REST：`firestore.googleapis.com/v1/projects/xiaozhangben-7d819/databases/(default)/documents/apiKeys/<金鑰>?mask.fieldPaths=json`，不用登入、不需 Blaze）。帳本文件存 `apiKey`；`apiKeys/{金鑰}` = `{ledgerId, json, updatedAt}`，`json` 是分類名稱、次分類、付款方式名稱和 Excel 欄位說明（`apiPayload()`）。分類／付款方式改了或 App 開啟時 `publishApi()` 自動更新（內容沒變不寫）。可重新產生（舊的刪掉）、停用。「複製給 AI 的指令」(`aiPrompt()`) 含網址＋分類清單＋Excel 格式；剪貼簿不能用時改開文字框讓使用者自己複製。
+  - 2.5.0 給 AI 讀分類的唯讀 API：設定頁「AI 整理帳單（分類 API）」產生網址（Firestore REST：`firestore.googleapis.com/v1/projects/xiaozhangben-7d819/databases/(default)/documents/apiKeys/<金鑰>?mask.fieldPaths=json`，不用登入、不需 Blaze）。帳本文件存 `apiKey`；`apiKeys/{金鑰}` = `{ledgerId, json, updatedAt}`，`json` 是分類名稱、次分類、付款方式名稱和 Excel 欄位說明（`apiPayload()`）。分類／付款方式改了或 App 開啟時 `publishApi()` 自動更新（內容沒變不寫）。可重新產生（舊的刪掉）、停用。「複製給 AI 的指令」(`aiPrompt()`) 分類清單直接寫在指令最前面（Gemini 等聊天 AI 不能開外部網址），API 網址只附在最後給能上網的 AI 工具，AI 不能產生 .xlsx 時改輸出表格；剪貼簿不能用時改開文字框讓使用者自己複製。
 - 記一筆：計算機鍵盤（可 + −）、主分類格子 → 次分類小按鈕（可不選）、付款方式、日期、備註。所有確認都用 App 內的視窗：askConfirm()（取消／確定）和 notice()（只有「知道了」），index.html 的 #confirm 疊層；不要再用瀏覽器內建的 confirm/alert。
 - 報表：上方可多選帳戶（不選＝全部，只記在當次開啟，不存檔），依選的帳戶算；近 12 個月支出長條圖（虛線＝有記帳月份的平均，點長條切換月份）；主分類圓餅圖（前 5 名＋其他），點主分類展開次分類明細。
 - 付款：每種付款方式本月花多少。

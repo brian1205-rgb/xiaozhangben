@@ -12,7 +12,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 const STORE_KEY = 'xiaozhangben:v1'; // 舊版（1.x）存在手機裡的資料
-const APP_VERSION = '2.5.0';
+const APP_VERSION = '2.5.1';
 // 1.2.0 起支出分類分成「主分類 + 次分類」，資料格式 version 2（舊資料自動轉換）。
 // 1.1.0 起只記支出。舊版的收入／轉帳記錄仍保留在資料與備份檔中，只是不顯示。
 
@@ -1791,29 +1791,33 @@ async function copyText(text, label) {
     const ta = $('#modal .copy-box'); ta.focus(); ta.select();
   }
 }
-// 給 AI 的指令：附上 API 網址，也直接附上分類清單（AI 打不開網址時用）
+// 給 AI 的指令：分類清單直接寫在指令裡（大部分聊天 AI 例如 Gemini 不能開外部網址）；
+// 有 API 網址的話附在最後，給能上網讀資料的 AI 工具用
 function aiPrompt() {
   const key = cloud.meta?.apiKey;
   const cats = data.categories.expense.map((c) => `${c.name}：${c.subs.map((s) => s.name).join('、') || '（沒有次分類）'}`).join('\n');
   return `你是我的記帳助理。請幫我把信用卡帳單整理成可以匯入「小帳本」記帳 App 的 Excel。
 
-1. ${key ? `先開啟這個網址，取得小帳本最新的分類和付款方式（回傳內容裡 fields.json.stringValue 是一段 JSON）：
-${apiUrl(key)}
-如果你無法開啟網址，就用最下面附的分類清單。` : '小帳本的分類清單附在最下面。'}
-2. 讀我提供的信用卡帳單，把每一筆消費判斷成小帳本的「主分類」和「次分類」。
-3. 產生 Excel（.xlsx），只要一個工作表，第一列欄位名稱固定是：${IMPORT_HEAD.join('、')}
+【小帳本的分類清單】（主分類：次分類）
+${cats}
+
+【付款方式】${data.accounts.map((a) => a.name).join('、')}
+
+【要做的事】
+1. 讀我提供的信用卡帳單，把每一筆消費判斷成上面清單裡的「主分類」和「次分類」。
+2. 產生 Excel（.xlsx），只要一個工作表，第一列欄位名稱固定是：${IMPORT_HEAD.join('、')}
    - 日期：YYYY/MM/DD（帳單上的消費日）
    - 金額：正數，新台幣（外幣消費用帳單上的台幣金額）
-   - 主分類、次分類：只能用清單裡的名稱；沒有適合的次分類就空白
+   - 主分類、次分類：只能用上面清單裡的名稱；沒有適合的次分類就空白
    - 付款方式：${cardAccName(data)}
    - 備註：商店名稱或消費說明
    - 退款、繳款、利息、年費折抵等不是一般消費的項目不要放進去，另外列出來給我看
-4. 給我 Excel 檔，並列出你不確定分類的項目，讓我檢查。
+3. 如果你不能直接產生 .xlsx 檔，就用上面的欄位輸出一個表格（或 CSV 文字），我會自己貼到 Excel 或 Google 試算表。
+4. 最後列出你不確定分類的項目，讓我檢查。${key ? `
 
-分類清單（主分類：次分類）：
-${cats}
-
-付款方式：${data.accounts.map((a) => a.name).join('、')}`;
+（給能上網讀資料的 AI 工具：小帳本最新的分類也可以從這個網址讀到，回傳內容裡 fields.json.stringValue 是一段 JSON：
+${apiUrl(key)}
+如果你不能開啟網址，直接用上面的清單就好，不需要這個網址，也不用問我。）` : ''}`;
 }
 
 // ---------- 匯入 Excel（批次新增，例如 AI 整理好的信用卡帳單） ----------
