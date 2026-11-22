@@ -512,7 +512,8 @@ button.row:active { background: var(--chip); }
 .imp-tip .bad { color: var(--neg); }
 .imp-tip .dup { color: #b06a00; }
 @media (min-width: 960px) {
-  .side-import { display: block; order: 2; margin-top: 10px; text-align: left; padding: 10px 12px; border-radius: 12px; font-size: 16.8px; color: var(--text2); }
+  .side-import { display: flex; order: 2; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; font-size: 18px; color: var(--text2); }
+  .side-import svg { width: 24px; height: 24px; flex: none; }
   .side-import:hover { background: var(--chip); }
   .modal-card.import-card { max-width: 1040px; width: calc(100vw - 300px); max-height: 90vh; }
   .imp-tools .sf { flex: 1 1 220px; }
