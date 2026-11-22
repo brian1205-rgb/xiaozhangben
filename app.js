@@ -12,7 +12,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 const STORE_KEY = 'xiaozhangben:v1'; // 舊版（1.x）存在手機裡的資料
-const APP_VERSION = '2.3.0';
+const APP_VERSION = '2.3.1';
 // 1.2.0 起支出分類分成「主分類 + 次分類」，資料格式 version 2（舊資料自動轉換）。
 // 1.1.0 起只記支出。舊版的收入／轉帳記錄仍保留在資料與備份檔中，只是不顯示。
 
@@ -624,16 +624,21 @@ function summaryCard(txs, label = `${ui.ym.m} 月支出`) {
   </div>`;
 }
 
-// 標題顯示次分類（沒有就顯示主分類），第二行顯示「主分類 · 付款方式 · 備註」
+// 標題顯示次分類（沒有就顯示主分類）；第二行用不同顏色的小標籤分開「主分類」「付款方式」「記錄者」；有備註時第三行顯示備註
 function txRow(t) {
   const c = findCat('expense', t.categoryId);
   const s = findSub(c, t.subCategoryId);
   const title = s ? s.name : (c?.name ?? '未分類');
   const who = isFamily() && t.by ? (t.by === cloud.user.uid ? '我' : (cloud.meta.members?.[t.by]?.name || t.byName || '家人')) : null;
-  const sub = [s ? c.name : null, accName(t.accountId), t.note || null, who].filter(Boolean).join(' · ');
+  const a = findAcc(t.accountId);
+  const tags = [
+    s ? `<span class="tag tag-cat">${esc(c.name)}</span>` : '',
+    `<span class="tag tag-acc">${a ? `<i>${esc(a.icon)}</i>` : ''}${esc(a?.name ?? '（已刪除帳戶）')}</span>`,
+    who ? `<span class="tag tag-who"><i>👤</i>${esc(who)}</span>` : '',
+  ].join('');
   return `<button class="tx" data-action="edit-tx" data-id="${esc(t.id)}">
     <span class="tx-icon">${esc(c?.icon ?? '❔')}</span>
-    <span class="tx-main"><span class="tx-name">${esc(title)}</span><span class="tx-sub">${esc(sub)}</span></span>
+    <span class="tx-main"><span class="tx-name">${esc(title)}</span><span class="tx-tags">${tags}</span>${t.note ? `<span class="tx-note">${esc(t.note)}</span>` : ''}</span>
     <span class="tx-amt">${fmt(t.amount)}</span>
   </button>`;
 }

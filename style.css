@@ -129,6 +129,13 @@ body.no-tabs .tabbar { display: none; }
 .tx-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .tx-name { font-weight: 600; }
 .tx-sub { font-size: 15px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tx-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+.tag { display: inline-flex; align-items: center; gap: 3px; font-size: 13.5px; line-height: 1; padding: 4px 8px; border-radius: 999px; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.tag i { font-style: normal; font-size: 12.5px; }
+.tag-cat { background: var(--chip); color: var(--text2); }
+.tag-acc { background: #e8f0fb; color: #2a5fa8; }
+.tag-who { background: #fdf0e3; color: #a55a12; }
+.tx-note { font-size: 14.5px; color: var(--muted); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tx-amt { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .empty { text-align: center; color: var(--text2); padding: 48px 16px; }
 .empty .big { font-size: 52.8px; margin-bottom: 8px; }
@@ -390,7 +397,7 @@ button.row:active { background: var(--chip); }
 }
 
 /* 只放表情符號的地方：優先用 Noto 表情符號字型，電腦和手機長得一樣 */
-.tx-icon, .cat-icon, .crow .ci, .emoji-grid button, .empty .big, .ledger-pill .lp-icon {
+.tx-icon, .tag i, .cat-icon, .crow .ci, .emoji-grid button, .empty .big, .ledger-pill .lp-icon {
   font-family: "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
 }
 
