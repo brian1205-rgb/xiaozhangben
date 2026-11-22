@@ -8,11 +8,11 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/fireba
 import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-  doc, collection, query, where, getDoc, getDocs, setDoc, updateDoc, onSnapshot, writeBatch,
+  doc, collection, query, where, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, writeBatch,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 const STORE_KEY = 'xiaozhangben:v1'; // 舊版（1.x）存在手機裡的資料
-const APP_VERSION = '2.4.0';
+const APP_VERSION = '2.5.0';
 // 1.2.0 起支出分類分成「主分類 + 次分類」，資料格式 version 2（舊資料自動轉換）。
 // 1.1.0 起只記支出。舊版的收入／轉帳記錄仍保留在資料與備份檔中，只是不顯示。
 
@@ -228,6 +228,7 @@ function save() {
   if (mj !== synced.meta) {
     ops.push(['set', ledgerRef(lid), clean({ ...metaOf(data), updatedAt: Date.now() }), { merge: true }]);
     synced.meta = mj;
+    if (cloud.meta?.apiKey) publishApi(lid).catch(() => {}); // 分類或付款方式改了，給 AI 讀的那份也更新
   }
   const seen = new Set();
   for (const t of data.txs) {
@@ -297,6 +298,7 @@ function bookFor(id) {
     // 只有別人（或另一支手機）改過才換掉，避免打斷正在編輯的畫面
     if (mj !== b.synced.meta) { for (const k of META_KEYS) b.data[k] = d[k]; b.synced.meta = mj; }
     b.gotMeta = true;
+    if (m.apiKey) publishApi(id).catch(() => {}); // 失敗的話下次再試
     // 家用帳本：把自己的名字記在成員名單上，讓大家看得到是誰記的
     if (m.type === 'family' && m.members?.[cloud.user.uid]?.name !== myName()) {
       updateDoc(ledgerRef(id), { [`members.${cloud.user.uid}`]: { name: myName(), email: cloud.email } }).catch(() => {});
@@ -1141,6 +1143,17 @@ function viewSettings() {
     </div>
     <p class="hint">想先看看有資料時的樣子，可以加入一些假的支出記錄。範例資料可以一鍵移除，不會動到你自己記的帳。</p>
     </section>`}
+    <section class="group"><h2>AI 整理帳單（分類 API）</h2><div class="rows">
+      ${cur.apiKey ? `<div class="row api-row"><span class="tx-main"><span>API 網址</span><span class="tx-sub api-url">${esc(apiUrl(cur.apiKey))}</span></span>
+          <button class="text-btn" data-action="api-copy-url">複製</button></div>
+        <button class="row" data-action="api-copy-prompt"><span>複製給 AI 的指令</span><span class="row-val">含網址和分類 ›</span></button>
+        <button class="row" data-action="api-regen"><span>重新產生網址</span><span class="row-val">舊網址會失效 ›</span></button>
+        <button class="row danger" data-action="api-off"><span>停用 API</span></button>`
+      : `<button class="row" data-action="api-on"><span>產生 API 網址</span><span class="row-val">讓 AI 讀分類 ›</span></button>
+        <button class="row" data-action="api-copy-prompt"><span>複製給 AI 的指令</span><span class="row-val">只含分類 ›</span></button>`}
+    </div>
+    <p class="hint">把「給 AI 的指令」貼給 ChatGPT、Claude 等 AI，再附上信用卡帳單，AI 就會照小帳本的分類整理成 Excel，修改後用下面的「匯入 Excel」批次新增。API 網址只能讀到這本帳本的分類和付款方式名稱，讀不到記帳記錄，也不能修改帳本；請不要公開分享，萬一外流就按「重新產生網址」。</p>
+    </section>
     <section class="group"><h2>匯入 Excel（批次新增）</h2><div class="rows">
       <button class="row" data-action="import-excel"><span>上傳 Excel 檔</span><span class="row-val">.xlsx / .csv ›</span></button>
       <button class="row" data-action="excel-template"><span>下載 Excel 範本</span><span class="row-val">含分類清單 ›</span></button>
@@ -1697,6 +1710,112 @@ function doMonthExport() {
   closeLayer();
 }
 
+// ---------- 給 AI 讀分類的 API（唯讀） ----------
+// 帳本文件的 apiKey 是一組隨機金鑰；apiKeys/{金鑰} 存一份「分類＋付款方式名稱」的 JSON，
+// 任何人知道網址就能讀這一份（規則只允許 get，不能列出、不能讀記帳記錄、不能修改帳本）。
+// 分類或付款方式有改時，App 會自動更新這一份。
+const API_BASE = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents/apiKeys/`;
+const apiUrl = (key) => `${API_BASE}${key}?mask.fieldPaths=json`;
+function newApiKey() {
+  const a = new Uint8Array(24);
+  crypto.getRandomValues(a);
+  return btoa(String.fromCharCode(...a)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+const IMPORT_HEAD = ['日期', '金額', '主分類', '次分類', '付款方式', '備註'];
+const cardAccName = (d) => (d.accounts.find((a) => a.name.includes('信用卡')) || d.accounts[0])?.name || '信用卡';
+function apiPayload(d, meta) {
+  return {
+    app: '小帳本',
+    ledger: meta?.type === 'family' ? (meta.name || '家用') : '個人',
+    excelColumns: IMPORT_HEAD,
+    categories: d.categories.expense.map((c) => ({ name: c.name, subs: c.subs.map((s) => s.name) })),
+    accounts: d.accounts.map((a) => a.name),
+    notes: [
+      '主分類請用 categories 裡的 name；次分類請用該主分類 subs 裡的名稱，沒有適合的可以空白',
+      `付款方式請用 accounts 裡的名稱（信用卡帳單填「${cardAccName(d)}」）`,
+      '日期格式 YYYY/MM/DD；金額填正數（新台幣）；退款、繳款、利息不是消費，不要放進明細',
+    ],
+  };
+}
+// 把某本帳本的分類寫到 API 那一份（內容沒變就不寫）
+function publishApi(lid, force = false) {
+  const b = books.get(lid);
+  const key = b?.meta?.apiKey;
+  if (!key || !b.gotMeta) return Promise.resolve();
+  const payload = apiPayload(b.data, b.meta);
+  const sig = key + JSON.stringify(payload);
+  if (!force && b.apiSig === sig) return Promise.resolve();
+  b.apiSig = sig;
+  return setDoc(doc(db, 'apiKeys', key), { ledgerId: lid, json: JSON.stringify({ ...payload, updatedAt: new Date().toISOString() }), updatedAt: Date.now() })
+    .catch((e) => { console.error('publishApi', e); b.apiSig = ''; throw e; });
+}
+async function enableApi() {
+  const lid = cloud.activeId;
+  const b = books.get(lid);
+  const old = b?.meta?.apiKey;
+  const key = newApiKey();
+  try {
+    b.meta = { ...b.meta, apiKey: key }; cloud.meta = b.meta;
+    await publishApi(lid, true);
+    await updateDoc(ledgerRef(lid), { apiKey: key });
+    if (old) await deleteDoc(doc(db, 'apiKeys', old)).catch(() => {});
+    render();
+    toast(old ? '已產生新網址，舊網址不能用了' : '已產生 API 網址');
+  } catch (e) {
+    b.meta = { ...b.meta, apiKey: old || null }; cloud.meta = b.meta;
+    render();
+    notice('產生失敗', e.code === 'permission-denied' ? '雲端的安全規則還沒更新，請先更新 Firebase 的規則。' : '請檢查網路後再試一次。');
+  }
+}
+async function disableApi() {
+  const lid = cloud.activeId;
+  const old = cloud.meta?.apiKey;
+  if (!old) return;
+  try {
+    await updateDoc(ledgerRef(lid), { apiKey: null });
+    await deleteDoc(doc(db, 'apiKeys', old)).catch(() => {});
+    toast('已停用 API，網址不能用了');
+  } catch (e) { console.error(e); notice('停用失敗', '請檢查網路後再試一次。'); }
+}
+// 複製到剪貼簿；不行的話開一個視窗讓使用者自己全選複製
+async function copyText(text, label) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(`已複製${label}`);
+  } catch {
+    $('#modal').innerHTML = `<div class="modal-card" role="dialog" aria-modal="true" aria-label="複製${esc(label)}">
+      <div class="modal-head"><span class="text-btn-spacer"></span><h3>複製${esc(label)}</h3><button class="text-btn" data-action="close-layer">完成</button></div>
+      <div class="form-body"><p class="hint" style="margin-top:0">請長按下面的文字 → 全選 → 複製。</p>
+      <textarea class="copy-box" readonly rows="10">${esc(text)}</textarea></div></div>`;
+    openLayer('modal');
+    const ta = $('#modal .copy-box'); ta.focus(); ta.select();
+  }
+}
+// 給 AI 的指令：附上 API 網址，也直接附上分類清單（AI 打不開網址時用）
+function aiPrompt() {
+  const key = cloud.meta?.apiKey;
+  const cats = data.categories.expense.map((c) => `${c.name}：${c.subs.map((s) => s.name).join('、') || '（沒有次分類）'}`).join('\n');
+  return `你是我的記帳助理。請幫我把信用卡帳單整理成可以匯入「小帳本」記帳 App 的 Excel。
+
+1. ${key ? `先開啟這個網址，取得小帳本最新的分類和付款方式（回傳內容裡 fields.json.stringValue 是一段 JSON）：
+${apiUrl(key)}
+如果你無法開啟網址，就用最下面附的分類清單。` : '小帳本的分類清單附在最下面。'}
+2. 讀我提供的信用卡帳單，把每一筆消費判斷成小帳本的「主分類」和「次分類」。
+3. 產生 Excel（.xlsx），只要一個工作表，第一列欄位名稱固定是：${IMPORT_HEAD.join('、')}
+   - 日期：YYYY/MM/DD（帳單上的消費日）
+   - 金額：正數，新台幣（外幣消費用帳單上的台幣金額）
+   - 主分類、次分類：只能用清單裡的名稱；沒有適合的次分類就空白
+   - 付款方式：${cardAccName(data)}
+   - 備註：商店名稱或消費說明
+   - 退款、繳款、利息、年費折抵等不是一般消費的項目不要放進去，另外列出來給我看
+4. 給我 Excel 檔，並列出你不確定分類的項目，讓我檢查。
+
+分類清單（主分類：次分類）：
+${cats}
+
+付款方式：${data.accounts.map((a) => a.name).join('、')}`;
+}
+
 // ---------- 匯入 Excel（批次新增，例如 AI 整理好的信用卡帳單） ----------
 // Excel 欄位：日期、金額、主分類、次分類、付款方式、備註（第一列是欄位名稱；小帳本匯出的 CSV 也能直接匯回來）
 // 讀 Excel 用 SheetJS，第一次用到才從官方 CDN 載入
@@ -2239,6 +2358,20 @@ const actions = {
   },
   'export-json': () => exportJSON(),
   'import-json': () => $('#importFile').click(),
+  // 給 AI 讀分類的 API
+  'api-on': () => enableApi(),
+  'api-regen': async () => {
+    if (!(await askConfirm({ title: '重新產生 API 網址？', message: '舊的網址會馬上失效，已經給 AI 的指令要換成新的。', ok: '重新產生' }))) return;
+    closeLayer();
+    enableApi();
+  },
+  'api-off': async () => {
+    if (!(await askConfirm({ title: '停用 API？', message: '網址會馬上失效。之後要用可以再產生一組新的。', ok: '停用' }))) return;
+    closeLayer();
+    disableApi();
+  },
+  'api-copy-url': () => { if (cloud.meta?.apiKey) copyText(apiUrl(cloud.meta.apiKey), ' API 網址'); },
+  'api-copy-prompt': () => copyText(aiPrompt(), '給 AI 的指令'),
   // 匯入 Excel
   'import-excel': () => $('#excelFile').click(),
   'excel-template': () => downloadTemplate(),

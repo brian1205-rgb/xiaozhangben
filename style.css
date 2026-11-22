@@ -524,3 +524,8 @@ button.row:active { background: var(--chip); }
   .imp-date { font-size: 15.6px; }
   .imp-note { font-weight: 500; }
 }
+
+/* AI 分類 API */
+.api-row .tx-main { display: flex; flex-direction: column; min-width: 0; }
+.api-url { font-size: 13.2px; font-family: ui-monospace, Consolas, monospace; white-space: normal; word-break: break-all; color: var(--muted); }
+.copy-box { width: 100%; padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); font-size: 14.4px; line-height: 1.5; resize: vertical; }
