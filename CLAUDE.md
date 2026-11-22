@@ -5,7 +5,7 @@
 
 - 網站：https://brian1205-rgb.github.io/xiaozhangben/
 - 存放區：https://github.com/brian1205-rgb/xiaozhangben（Public，`main` 分支根目錄就是網站）
-- 目前版本：**2.2.3**（`app.js` 的 `APP_VERSION`）
+- 目前版本：**2.2.4**（`app.js` 的 `APP_VERSION`）
 
 ## 多台電腦開發（重要）
 使用者會在不同電腦開發，GitHub 是唯一的正本：
@@ -31,7 +31,7 @@
 index.html            頁面骨架、底部選單
 app.js                全部程式（ES module，無框架、無打包；從 gstatic CDN 載入 Firebase 10.14.1）
 style.css             樣式（固定淺色）
-sw.js                 Service Worker：network-first 離線快取，抓檔用 cache:no-cache（GitHub Pages 有 max-age=600，不這樣手機會用 10 分鐘內的舊檔）。改了檔案要把 CACHE 版本 +1（目前 xiaozhangben-v19）；gstatic 的 Firebase 檔案和 Google 字型用 cache-first
+sw.js                 Service Worker：network-first 離線快取，抓檔用 cache:no-cache（GitHub Pages 有 max-age=600，不這樣手機會用 10 分鐘內的舊檔）。改了檔案要把 CACHE 版本 +1（目前 xiaozhangben-v20）；gstatic 的 Firebase 檔案和 Google 字型用 cache-first
 manifest.webmanifest  PWA 設定
 icon-192.png / icon-512.png / apple-touch-icon.png   App 圖示（手繪暖色風）
 _config.yml           GitHub Pages 設定：排除 CLAUDE.md；_ 開頭資料夾本來就不會發佈
@@ -71,7 +71,7 @@ _dev/tools/           開發工具（不會出現在網站上）
 
 ## 功能現況（2.2.0）
 - 首頁：月份切換、**這星期日曆**（有記錄的日子有圓點，可展開整月；左右滑動時日曆跟著手指移動，放開後平滑換週/月）、**今日／本週／本月**三格（點了切換清單範圍）、依日期分組的明細。選了某天按＋會預設記在那天。
-- 記一筆：計算機鍵盤（可 + −）、主分類格子 → 次分類小按鈕（可不選）、付款方式、日期、備註。刪除記錄時跳出 App 內的確認視窗（askConfirm()，index.html 的 #confirm 疊層；其他地方的確認目前仍是瀏覽器內建 confirm）。
+- 記一筆：計算機鍵盤（可 + −）、主分類格子 → 次分類小按鈕（可不選）、付款方式、日期、備註。所有確認都用 App 內的視窗：askConfirm()（取消／確定）和 notice()（只有「知道了」），index.html 的 #confirm 疊層；不要再用瀏覽器內建的 confirm/alert。
 - 報表：上方可多選帳戶（不選＝全部，只記在當次開啟，不存檔），依選的帳戶算；近 12 個月支出長條圖（虛線＝有記帳月份的平均，點長條切換月份）；主分類圓餅圖（前 5 名＋其他），點主分類展開次分類明細。
 - 付款：每種付款方式本月花多少。
 - 電腦版：左邊固定選單（記一筆、各分頁、帳本切換）；明細頁左邊固定顯示整月日曆（沒有切換單週按鈕）＋統計、右邊明細；報表頁總額和 12 個月長條圖並排、圓餅圖和分類清單並排；記一筆和表單是畫面中間的視窗；快捷鍵 N 記一筆、← → 換月份、Esc 關閉視窗、記帳時可直接用鍵盤打金額。

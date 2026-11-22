@@ -414,3 +414,4 @@ button.row:active { background: var(--chip); }
 .cbtn.primary { background: var(--brand); color: #fff; }
 .cbtn:active { filter: brightness(.94); }
 @media (hover: hover) { .cbtn:hover { filter: brightness(.96); } .cbtn.danger:hover, .cbtn.primary:hover { filter: brightness(1.06); } }
+.confirm-btns.one { grid-template-columns: 1fr; }

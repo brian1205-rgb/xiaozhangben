@@ -12,7 +12,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 const STORE_KEY = 'xiaozhangben:v1'; // 舊版（1.x）存在手機裡的資料
-const APP_VERSION = '2.2.3';
+const APP_VERSION = '2.2.4';
 // 1.2.0 起支出分類分成「主分類 + 次分類」，資料格式 version 2（舊資料自動轉換）。
 // 1.1.0 起只記支出。舊版的收入／轉帳記錄仍保留在資料與備份檔中，只是不顯示。
 
@@ -413,7 +413,8 @@ async function login() {
 }
 
 async function logout() {
-  if (!confirm('確定要登出嗎？\n資料都在雲端，下次登入同一個 Google 帳號就會回來。')) return;
+  if (!(await askConfirm({ title: '確定要登出嗎？', message: '資料都在雲端，下次登入同一個 Google 帳號就會回來。', ok: '登出', danger: false }))) return;
+  closeLayer();
   stopListening();
   await signOut(auth);
 }
@@ -998,21 +999,24 @@ window.addEventListener('popstate', (ev) => {
 // ---------- App 內的確認視窗（取代瀏覽器內建的 confirm） ----------
 let confirmCb = null;
 // 按「確定」回傳 true（確認視窗還開著，由呼叫的地方關掉）；按取消、背景、返回鍵回傳 false
-function askConfirm({ title, message = '', ok = '確定', danger = true }) {
+function askConfirm({ title, message = '', ok = '確定', danger = true, single = false }) {
   return new Promise((resolve) => {
     confirmCb = resolve;
+    const btns = single
+      ? `<button class="cbtn primary" data-action="confirm-no">${esc(ok)}</button>`
+      : `<button class="cbtn" data-action="confirm-no">取消</button>
+        <button class="cbtn ${danger ? 'danger' : 'primary'}" data-action="confirm-yes">${esc(ok)}</button>`;
     $('#confirm').innerHTML = `<div class="confirm-card" role="alertdialog" aria-modal="true" aria-label="${esc(title)}">
       <h3>${esc(title)}</h3>
       ${message ? `<p>${esc(message).replace(/\n/g, '<br>')}</p>` : ''}
-      <div class="confirm-btns">
-        <button class="cbtn" data-action="confirm-no">取消</button>
-        <button class="cbtn ${danger ? 'danger' : 'primary'}" data-action="confirm-yes">${esc(ok)}</button>
-      </div>
+      <div class="confirm-btns${single ? ' one' : ''}">${btns}</div>
     </div>`;
     openLayer('confirm');
     setTimeout(() => $('#confirm .cbtn.danger, #confirm .cbtn.primary')?.focus(), 50);
   });
 }
+// 只有一個「知道了」按鈕的提示視窗（取代瀏覽器內建的 alert），按了會自己關掉
+const notice = (title, message = '') => askConfirm({ title, message, ok: '知道了', single: true });
 
 // ---------- 記一筆 ----------
 let entry = null;
@@ -1205,11 +1209,11 @@ function editAccount(acc) {
       else data.accounts.push({ id: uid(), name: v.name, icon: v.icon, initial: 0 });
       save(); render(); toast('已儲存');
     },
-    onDelete: acc ? () => {
+    onDelete: acc ? async () => {
       const n = data.txs.filter((t) => t.accountId === acc.id || t.toAccountId === acc.id).length;
-      if (n) { alert(`「${acc.name}」還有 ${n} 筆記錄，請先把這些記錄改成其他付款方式或刪除，才能刪除它。`); return false; }
-      if (data.accounts.length <= 1) { alert('至少要保留一種付款方式。'); return false; }
-      if (!confirm(`確定要刪除付款方式「${acc.name}」嗎？`)) return false;
+      if (n) { await notice('還不能刪除', `「${acc.name}」還有 ${n} 筆記錄，請先把這些記錄改成其他付款方式或刪除，才能刪除它。`); return false; }
+      if (data.accounts.length <= 1) { await notice('還不能刪除', '至少要保留一種付款方式。'); return false; }
+      if (!(await askConfirm({ title: `確定要刪除付款方式「${acc.name}」嗎？`, ok: '刪除' }))) return false;
       data.accounts = data.accounts.filter((a) => a.id !== acc.id);
       save(); render(); toast('已刪除');
     } : null,
@@ -1284,12 +1288,12 @@ function editCat(type, cat) {
       else data.categories.expense.push({ id: uid(), name: v.name, icon: v.icon, subs: [] });
       save(); renderCatManager(); render(); toast('已儲存');
     },
-    onDelete: cat ? () => {
-      if (data.categories.expense.length <= 1) { alert('至少要保留一個主分類。'); return false; }
+    onDelete: cat ? async () => {
+      if (data.categories.expense.length <= 1) { await notice('還不能刪除', '至少要保留一個主分類。'); return false; }
       const n = data.txs.filter((t) => t.type === 'expense' && t.categoryId === cat.id).length;
-      const subs = cat.subs.length ? `（包含 ${cat.subs.length} 個次分類）` : '';
-      const msg = n ? `「${cat.name}」${subs}有 ${n} 筆記錄，刪除後這些記錄會顯示為「未分類」。確定刪除嗎？` : `確定刪除主分類「${cat.name}」${subs}嗎？`;
-      if (!confirm(msg)) return false;
+      const subs = cat.subs.length ? `包含 ${cat.subs.length} 個次分類。` : '';
+      const msg = n ? `${subs}有 ${n} 筆記錄，刪除後這些記錄會顯示為「未分類」。` : subs;
+      if (!(await askConfirm({ title: `確定刪除主分類「${cat.name}」嗎？`, message: msg, ok: '刪除' }))) return false;
       data.categories.expense = data.categories.expense.filter((c) => c.id !== cat.id);
       catMgr.mainId = null;
       save(); renderCatManager(); render(); toast('已刪除');
@@ -1307,10 +1311,10 @@ function editSub(main, sub) {
       else main.subs.push({ id: uid(), name: v.name });
       save(); renderCatManager(); render(); toast('已儲存');
     },
-    onDelete: sub ? () => {
+    onDelete: sub ? async () => {
       const hits = data.txs.filter((t) => t.subCategoryId === sub.id);
-      const msg = hits.length ? `「${sub.name}」有 ${hits.length} 筆記錄，刪除後這些記錄會只顯示主分類「${main.name}」。確定刪除嗎？` : `確定刪除次分類「${sub.name}」嗎？`;
-      if (!confirm(msg)) return false;
+      const msg = hits.length ? `有 ${hits.length} 筆記錄，刪除後這些記錄會只顯示主分類「${main.name}」。` : '';
+      if (!(await askConfirm({ title: `確定刪除次分類「${sub.name}」嗎？`, message: msg, ok: '刪除' }))) return false;
       for (const t of hits) t.subCategoryId = null;
       main.subs = main.subs.filter((s) => s.id !== sub.id);
       save(); renderCatManager(); render(); toast('已刪除');
@@ -1410,17 +1414,25 @@ $('#importFile').addEventListener('change', async (ev) => {
   const file = ev.target.files[0];
   ev.target.value = '';
   if (!file) return;
+  let incoming;
   try {
     const d = JSON.parse(await file.text());
     if (!validData(d)) throw new Error('格式不符');
-    const incoming = normalize(d);
-    const where = activeLedger() ? ledgerLabel(activeLedger()) : '目前的帳本';
-    if (!confirm(`備份檔裡有 ${incoming.txs.length} 筆記錄。\n還原會「取代」${where}目前的 ${data.txs.length} 筆記錄，確定嗎？`)) return;
-    data = { ...incoming, prefs: data.prefs };
-    save(); render(); toast('已還原備份');
+    incoming = normalize(d);
   } catch (err) {
-    alert('這個檔案無法讀取，請確認是「小帳本」匯出的備份檔。');
+    notice('無法讀取這個檔案', '請確認是「小帳本」匯出的備份檔。');
+    return;
   }
+  const where = activeLedger() ? ledgerLabel(activeLedger()) : '目前的帳本';
+  const ok = await askConfirm({
+    title: '確定要從備份檔還原嗎？',
+    message: `備份檔裡有 ${incoming.txs.length} 筆記錄。\n還原會「取代」${where}目前的 ${data.txs.length} 筆記錄。`,
+    ok: '還原',
+  });
+  if (!ok) return;
+  closeLayer();
+  data = { ...incoming, prefs: data.prefs };
+  save(); render(); toast('已還原備份');
 });
 
 // ---------- 提示訊息 ----------
@@ -1521,7 +1533,8 @@ const actions = {
     for (const f of form.fields) values[f.key] = f.type === 'emoji' ? form.emoji[f.key] : $('#f_' + f.key).value.trim();
     if (form.onSave(values) !== false) closeLayer();
   },
-  'form-delete': () => { if (form.onDelete() !== false) closeLayer(); },
+  // 表單裡的「刪除」：確認後要關掉確認視窗和表單兩層
+  'form-delete': async () => { if ((await form.onDelete()) !== false) closeLayers(2); },
   'add-demo': () => {
     const demo = makeDemoTxs();
     data.txs.push(...demo);
@@ -1530,9 +1543,10 @@ const actions = {
     render(); window.scrollTo(0, 0);
     toast(`已加入 ${demo.length} 筆範例資料`);
   },
-  'remove-demo': () => {
+  'remove-demo': async () => {
     const n = demoCount();
-    if (!confirm(`要移除 ${n} 筆範例資料嗎？\n你自己記的帳不會受影響。`)) return;
+    if (!(await askConfirm({ title: `要移除 ${n} 筆範例資料嗎？`, message: '你自己記的帳不會受影響。', ok: '移除' }))) return;
+    closeLayer();
     data.txs = data.txs.filter((t) => !t.demo);
     save(); render(); toast('已移除範例資料');
   },
@@ -1589,9 +1603,10 @@ const actions = {
         .catch((e) => { console.error(e); toast('加入失敗：' + (e.code || e.message)); });
     },
   }),
-  'remove-member': (el) => {
+  'remove-member': async (el) => {
     const em = el.dataset.email;
-    if (!confirm(`要把 ${em} 移出這本帳本嗎？\n移除後他就看不到這本帳本了（他之前記的帳會留著）。`)) return;
+    if (!(await askConfirm({ title: '要把這位成員移出帳本嗎？', message: `${em}\n移除後他就看不到這本帳本了（他之前記的帳會留著）。`, ok: '移除' }))) return;
+    closeLayer();
     updateDoc(ledgerRef(cloud.activeId), { memberEmails: (cloud.meta.memberEmails || []).filter((x) => x !== em) })
       .then(() => toast('已移除'))
       .catch((e) => { console.error(e); toast('移除失敗：' + (e.code || e.message)); });
@@ -1599,7 +1614,8 @@ const actions = {
   'delete-family': async () => {
     if (!isFamily() || !isOwner()) return;
     const name = cloud.meta.name || '家用';
-    if (!confirm(`確定要刪除「${name}」嗎？\n裡面 ${data.txs.length} 筆記錄會全部刪除，所有成員都看不到，而且無法復原。\n建議先「匯出備份檔」。`)) return;
+    if (!(await askConfirm({ title: `確定要刪除「${name}」嗎？`, message: `裡面 ${data.txs.length} 筆記錄會全部刪除，所有成員都看不到，而且無法復原。\n建議先「匯出備份檔」。`, ok: '刪除帳本' }))) return;
+    closeLayer();
     if (!navigator.onLine) { toast('刪除帳本需要網路'); return; }
     const id = cloud.activeId;
     const ids = data.txs.map((t) => t.id);
@@ -1615,9 +1631,10 @@ const actions = {
   'export-csv': () => exportCSV(),
   'month-export': () => openMonthExport(),
   'do-month-export': () => doMonthExport(),
-  'clear-all': () => {
+  'clear-all': async () => {
     if (isFamily()) return;
-    if (!confirm('這會刪除個人帳本（雲端）的所有記錄、付款方式和分類設定，而且無法復原。\n建議先「匯出備份檔」。\n\n確定要全部清除嗎？')) return;
+    if (!(await askConfirm({ title: '確定要全部清除嗎？', message: '這會刪除個人帳本（雲端）的所有記錄、付款方式和分類設定，而且無法復原。\n建議先「匯出備份檔」。', ok: '全部清除' }))) return;
+    closeLayer();
     data = defaultData(); save(); render(); toast('已清除');
   },
 };
@@ -1748,7 +1765,7 @@ onAuthStateChanged(auth, (user) => {
   stopListening();
   Object.assign(cloud, { status: 'signedOut', user: null, email: '', ledgers: [], activeId: null, meta: null, gotMeta: false, gotTxs: false });
   data = { ...defaultData(), accounts: [], categories: { expense: [], income: [] } };
-  layers.length = 0; hideLayer('sheet'); hideLayer('modal');
+  layers.length = 0; hideLayer('sheet'); hideLayer('modal'); hideLayer('confirm');
   ui.tab = 'list';
   render();
 });
