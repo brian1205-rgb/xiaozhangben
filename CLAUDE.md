@@ -9,7 +9,9 @@
 
 ## 多台電腦開發（重要）
 使用者會在不同電腦開發，GitHub 是唯一的正本：
-- **每次開始工作前先 `git pull`**，避免兩台電腦的修改互相覆蓋。
+- **每次開始工作前先 `git pull`**（包括每次開新對話、或隔一段時間再繼續時），避免兩台電腦的修改互相覆蓋。
+- push 被拒絕（遠端有另一台電腦推上去的新版）時：先 `git pull` 合併、重新測試，再 push。**絕對不要用 `git push --force`**，會把另一台的修改蓋掉。
+- 版本號（`APP_VERSION`、sw.js 的 CACHE）以 pull 下來的最新版為準再往上加，避免兩台電腦用到同一個版本號。
 - 新電腦第一次設定：
   1. 安裝 Git：`winget install --id Git.Git -e --source winget`（Git 可能不在 PATH，可用 `C:\Program Files\Git\cmd\git.exe`）
   2. 下載專案：`git clone https://github.com/brian1205-rgb/xiaozhangben.git`（建議放在英文路徑，例如 `Documents\xiaozhangben`；終端機工具不接受中文路徑）
